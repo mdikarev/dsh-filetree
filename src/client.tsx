@@ -5,6 +5,11 @@ import { createStore, toggle, close, type FileManagerStore } from "./store.js";
 import { ToggleTab } from "./ToggleTab.js";
 import { Panel } from "./Panel.js";
 
+// Services this client plugin depends on; the loader derives the plugin
+// fiber's injection list from this module's `inject` export (package.json's
+// dsh.client.inject only shapes the module graph, not service injection).
+export const inject = ["slots", "workspaces", "sessions"];
+
 const CSS_TAG_ID = "dsh-filemanager-css";
 
 function injectCss(css: string): void {
