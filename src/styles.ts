@@ -26,13 +26,29 @@ export const CSS_STRING = `
   color: var(--dsw-alias-label-primary);
 }
 
-/* Panel */
-.fm-panel {
+/* Clip host sits only in the content column (right of sidebar).
+   The drawer slides inside it, so translateX(-100%) is clipped and
+   never paints over the left sidebar. */
+.fm-panel-clip {
   position: fixed;
   top: 0;
   bottom: 0;
   width: 300px;
   z-index: 99;
+  overflow: hidden;
+  pointer-events: none;
+}
+.fm-panel-clip.fm-panel-clip--open {
+  pointer-events: auto;
+}
+
+/* Panel drawer (animates inside the clip host) */
+.fm-panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-overlay);

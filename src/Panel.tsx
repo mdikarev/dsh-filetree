@@ -58,45 +58,47 @@ export function Panel({ open, sidebarLeft, hint, onClose }: PanelProps) {
 
   return (
     <div
-      className={`fm-panel${open ? " fm-panel--open" : ""}`}
+      className={`fm-panel-clip${open ? " fm-panel-clip--open" : ""}`}
       style={{ left: sidebarLeft }}
     >
-      <div className="fm-header">
-        <span className="fm-header-title" title={rootPath}>
-          {rootName || "Файлы"}
-        </span>
-        <button
-          className="fm-header-btn"
-          onClick={handleRefresh}
-          title="Обновить"
-        >
-          ↻
-        </button>
-        <button className="fm-header-btn" onClick={onClose} title="Закрыть">
-          ✕
-        </button>
+      <div className={`fm-panel${open ? " fm-panel--open" : ""}`}>
+        <div className="fm-header">
+          <span className="fm-header-title" title={rootPath}>
+            {rootName || "Файлы"}
+          </span>
+          <button
+            className="fm-header-btn"
+            onClick={handleRefresh}
+            title="Обновить"
+          >
+            ↻
+          </button>
+          <button className="fm-header-btn" onClick={onClose} title="Закрыть">
+            ✕
+          </button>
+        </div>
+
+        {status === "loading" && (
+          <div className="fm-loading">
+            <span className="fm-spinner" /> Загрузка…
+          </div>
+        )}
+
+        {status === "error" && (
+          <div className="fm-error">
+            <div>Ошибка: {error}</div>
+            <button onClick={handleRefresh}>Повторить</button>
+          </div>
+        )}
+
+        {status === "no-workspace" && (
+          <div className="fm-empty">Нет воркспейса</div>
+        )}
+
+        {status === "ready" && (
+          <Tree hint={hint} entries={entries} onError={handleError} />
+        )}
       </div>
-
-      {status === "loading" && (
-        <div className="fm-loading">
-          <span className="fm-spinner" /> Загрузка…
-        </div>
-      )}
-
-      {status === "error" && (
-        <div className="fm-error">
-          <div>Ошибка: {error}</div>
-          <button onClick={handleRefresh}>Повторить</button>
-        </div>
-      )}
-
-      {status === "no-workspace" && (
-        <div className="fm-empty">Нет воркспейса</div>
-      )}
-
-      {status === "ready" && (
-        <Tree hint={hint} entries={entries} onError={handleError} />
-      )}
     </div>
   );
 }
