@@ -33,13 +33,3 @@ A toggle tab at the sidebar edge opens a panel showing the directory tree of the
    ```
 
 4. Restart `dsh web` and refresh the browser.
-
-## Removing old plugin
-
-If you have `dsh-file-explorer` installed:
-
-```bash
-dsh plugin --profile web remove dsh-file-explorer
-```
-
-And remove its entry from `cordis.patch.yml`.
