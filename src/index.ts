@@ -1,2 +1,22 @@
-// Host entry - will be implemented in Task 3
-export function apply() {}
+import { createHandler } from "./fs-api.js";
+import { resolve } from "node:path";
+
+const ROUTE_PREFIX = "/filemanager-fs";
+
+function resolveDefaultRoot(): string {
+  return resolve(process.env.DSH_WORKSPACE ?? process.cwd());
+}
+
+export function apply(ctx: any): void {
+  ctx.inject(["webServer"], (httpCtx: any) => {
+    httpCtx.effect(
+      () =>
+        httpCtx.webServer.register({
+          kind: "prefix",
+          path: ROUTE_PREFIX,
+          handler: createHandler(resolveDefaultRoot()),
+        }),
+      "dsh-filemanager: /filemanager-fs file tree API"
+    );
+  });
+}
