@@ -1,12 +1,28 @@
 // src/Tree.tsx
 import { useState, useEffect, useCallback } from "react";
-import { fetchList, sortEntries, getFileColor, type Entry } from "./api.js";
+import { fetchList, sortEntries, type Entry } from "./api.js";
 
 interface TreeNodeProps {
   entry: Entry;
   hint: string;
   path: string;
   onError: (msg: string) => void;
+}
+
+type FileIconVariant = "code" | "data" | "doc" | "image" | "special" | "default";
+
+export function getFileIconVariant(name: string): FileIconVariant {
+  if (name === "Dockerfile") return "special";
+  if (name === ".env") return "data";
+
+  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() ?? "" : "";
+
+  if (["ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "cs", "py", "java", "kt", "kts", "rs", "php", "rb", "sh", "bash", "zsh", "swift", "cpp", "cc", "c", "h", "hpp", "sql", "html", "css", "xml", "proto", "graphql"].includes(ext)) return "code";
+  if (["json", "yml", "yaml", "toml", "ini"].includes(ext)) return "data";
+  if (["md", "txt", "rst"].includes(ext)) return "doc";
+  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "avif"].includes(ext)) return "image";
+
+  return "default";
 }
 
 function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
@@ -16,6 +32,7 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
 
   const isDir = entry.kind === "dir" || entry.kind === "symlink-dir";
   const fullPath = path ? `${path}/${entry.name}` : entry.name;
+  const fileIconVariant = getFileIconVariant(entry.name);
 
   const handleToggle = useCallback(async () => {
     if (!isDir) return;
@@ -60,9 +77,11 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
           <span style={{ fontSize: 14 }}>{expanded ? "📂" : "📁"}</span>
         ) : (
           <span
-            className="fm-row-icon"
-            style={{ backgroundColor: getFileColor(entry.name) }}
-          />
+            className={`fm-file-icon fm-file-icon--${fileIconVariant}`}
+            aria-hidden="true"
+          >
+            <span className="fm-file-icon-fold" />
+          </span>
         )}
         <span className="fm-row-name">{entry.name}</span>
         {loading && <span className="fm-spinner" />}
