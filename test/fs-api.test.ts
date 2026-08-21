@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
@@ -151,6 +151,22 @@ describe("fs-api", () => {
       );
       assert.strictEqual(status, 400);
       assert.ok((body as any).error.includes("directory"));
+    });
+
+    it("returns 403 when listing a symlink that escapes the root", async () => {
+      const outsideDir = await mkdtemp(join(tmpdir(), "fs-api-outside-"));
+      try {
+        await symlink(outsideDir, join(tempDir, "escape-link"), "dir");
+        const { status, body } = await request(
+          handler,
+          `/filemanager-fs/list?hint=${encodeURIComponent(tempDir)}&path=escape-link`,
+          { "x-dsh-filemanager": "1" }
+        );
+        assert.strictEqual(status, 403);
+        assert.ok((body as any).error.includes("escape"));
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
     });
   });
 });

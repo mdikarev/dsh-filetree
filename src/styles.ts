@@ -40,10 +40,11 @@ export const CSS_STRING = `
   box-shadow: 4px 0 16px rgba(0,0,0,0.15);
   transform: translateX(-100%);
   transition: transform 0.2s ease;
-  pointer-events: auto;
+  pointer-events: none;
 }
 .fm-panel.fm-panel--open {
   transform: translateX(0);
+  pointer-events: auto;
 }
 
 /* Panel header */

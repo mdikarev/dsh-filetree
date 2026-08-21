@@ -12,22 +12,33 @@ export function ToggleTab({ open, onToggle, onSidebarLeft }: ToggleTabProps) {
   const tabRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Find sidebar column by structure:
-    // Our overlay is in the grid frame; sidebar is first column
+    // Find sidebar column by structure: the shell renders our overlay layer
+    // ([data-shell-overlay]) as a direct child of the grid frame, whose first
+    // column child is the sidebar.
     const findSidebarColumn = (): HTMLElement | null => {
       const el = tabRef.current;
       if (!el) return null;
 
-      // Walk up to find the grid frame (parent of overlay layer)
-      let frame = el.parentElement;
-      while (frame && !frame.querySelector("[data-slot-layer]")) {
-        frame = frame.parentElement;
+      // Preferred: the overlay layer's parent is the shell grid frame.
+      const overlay = el.closest("[data-shell-overlay]");
+      let frame: HTMLElement | null = overlay?.parentElement ?? null;
+
+      // Fallback: walk up to the closest CSS grid container ancestor.
+      if (!frame) {
+        let node = el.parentElement;
+        while (node) {
+          if (getComputedStyle(node).display === "grid") {
+            frame = node;
+            break;
+          }
+          node = node.parentElement;
+        }
       }
       if (!frame) return null;
 
-      // First child of frame is typically sidebar column
+      // First column child of the grid frame is the sidebar.
       const firstChild = frame.firstElementChild as HTMLElement | null;
-      if (firstChild && firstChild !== el.parentElement) {
+      if (firstChild && !firstChild.contains(el)) {
         return firstChild;
       }
       return null;
