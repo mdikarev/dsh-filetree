@@ -1,12 +1,14 @@
 // src/Tree.tsx
 import { useState, useEffect, useCallback } from "react";
 import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry } from "./api.js";
+import type { FileManagerStore } from "./store.js";
 
 interface TreeNodeProps {
   entry: Entry;
   hint: string;
   path: string;
   onError: (msg: string) => void;
+  store: FileManagerStore;
 }
 
 type FileIconVariant = "code" | "data" | "doc" | "image" | "special" | "default";
@@ -25,13 +27,14 @@ export function getFileIconVariant(name: string): FileIconVariant {
   return "default";
 }
 
-function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
-  const [expanded, setExpanded] = useState(false);
+function TreeNode({ entry, hint, path, onError, store }: TreeNodeProps) {
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [, forceUpdate] = useState({});
 
   const isDir = entry.kind === "dir" || entry.kind === "symlink-dir";
   const fullPath = path ? `${path}/${entry.name}` : entry.name;
+  const expanded = store.isExpanded(fullPath);
   const fileIconVariant = getFileIconVariant(entry.name);
   const entryTone = getEntryGitTone(entry);
   const gitStatus = isDir ? getDirectoryGitStatus(entry) : entry.gitStatus ?? null;
@@ -39,17 +42,54 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
   const showFolderIndicator = isDir && gitStatus !== "ignored" && gitBadge !== null;
   const showFileIndicator = !isDir && gitBadge !== null;
 
+  // Подписываемся на изменения store
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      forceUpdate({});
+    });
+    return unsubscribe;
+  }, [store]);
+
+  // Сбрасываем children при изменении hint (смена воркспейса)
+  useEffect(() => {
+    setChildren(null);
+  }, [hint]);
+
+  // Автоматически загружаем детей для раскрытых папок при монтировании
+  useEffect(() => {
+    if (isDir && expanded && children === null) {
+      // Symlink dirs that escape root cannot be expanded
+      if (entry.kind === "symlink-dir") {
+        setChildren([]); // Empty, can't traverse
+        return;
+      }
+
+      setLoading(true);
+      fetchList(hint, fullPath)
+        .then((res) => {
+          setChildren(sortEntries(res.entries));
+        })
+        .catch((err: any) => {
+          onError(`Failed to load ${fullPath}: ${err.message}`);
+          setChildren([]);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError]);
+
   const handleToggle = useCallback(async () => {
     if (!isDir) return;
 
     if (expanded) {
-      setExpanded(false);
+      store.togglePath(fullPath);
       return;
     }
 
     // Symlink dirs that escape root cannot be expanded
     if (entry.kind === "symlink-dir" && children === null) {
-      setExpanded(true);
+      store.togglePath(fullPath);
       setChildren([]); // Empty, can't traverse
       return;
     }
@@ -66,8 +106,8 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
         setLoading(false);
       }
     }
-    setExpanded(true);
-  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError]);
+    store.togglePath(fullPath);
+  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, store]);
 
   return (
     <div>
@@ -109,6 +149,7 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
               hint={hint}
               path={fullPath}
               onError={onError}
+              store={store}
             />
           ))}
         </div>
@@ -121,9 +162,10 @@ interface TreeProps {
   hint: string;
   entries: Entry[];
   onError: (msg: string) => void;
+  store: FileManagerStore;
 }
 
-export function Tree({ hint, entries, onError }: TreeProps) {
+export function Tree({ hint, entries, onError, store }: TreeProps) {
   const sorted = sortEntries(entries);
 
   if (sorted.length === 0) {
@@ -139,6 +181,7 @@ export function Tree({ hint, entries, onError }: TreeProps) {
           hint={hint}
           path=""
           onError={onError}
+          store={store}
         />
       ))}
     </div>

@@ -85,6 +85,7 @@ function computeWorkspaceState(workspaces: any, sessions: any): WorkspaceState {
 // Main component that wraps ToggleTab + Panel
 function FileManager({ workspaces, sessions }: any) {
   const { open, toggle: doToggle, close: doClose } = useStore();
+  const store = getStore();
   const [sidebarLeft, setSidebarLeft] = useState(0);
   const [ws, setWs] = useState<WorkspaceState>(() => 
     computeWorkspaceState(workspaces, sessions)
@@ -120,6 +121,7 @@ function FileManager({ workspaces, sessions }: any) {
         sidebarLeft={sidebarLeft}
         hint={hint}
         onClose={doClose}
+        store={store}
       />
     </>
   );

@@ -2,22 +2,31 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchRoot, fetchList, sortEntries, type Entry } from "./api.js";
 import { Tree } from "./Tree.js";
+import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
   open: boolean;
   sidebarLeft: number;
   hint: string;
   onClose: () => void;
+  store: FileManagerStore;
 }
 
 type Status = "loading" | "ready" | "error" | "no-workspace";
 
-export function Panel({ open, sidebarLeft, hint, onClose }: PanelProps) {
+export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [status, setStatus] = useState<Status>("loading");
   const [rootName, setRootName] = useState("");
   const [rootPath, setRootPath] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
+
+  // Устанавливаем текущий воркспейс в store при изменении hint
+  useEffect(() => {
+    if (hint) {
+      store.setWorkspace(hint);
+    }
+  }, [hint, store]);
 
   const loadRoot = useCallback(async () => {
     if (!hint) {
@@ -96,7 +105,7 @@ export function Panel({ open, sidebarLeft, hint, onClose }: PanelProps) {
         )}
 
         {status === "ready" && (
-          <Tree hint={hint} entries={entries} onError={handleError} />
+          <Tree hint={hint} entries={entries} onError={handleError} store={store} />
         )}
       </div>
     </div>

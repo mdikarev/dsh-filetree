@@ -73,10 +73,20 @@ function pathSegments(relativePath: string): string[] {
 
 function findInheritedIgnored(gitMap: Map<string, GitEntry>, normalized: string): boolean {
   const segments = pathSegments(normalized);
+  // Проверяем только непосредственных предков, которые ЯВНО в gitMap
+  // Это важно: если папка не показана git как ignored, она не ignored,
+  // даже если у неё есть ignored предок (может быть negated pattern)
   for (let i = segments.length - 1; i >= 1; i -= 1) {
     const ancestor = segments.slice(0, i).join("/");
     const entry = gitMap.get(ancestor) ?? gitMap.get(ancestor + "/");
+    
+    // Если нашли явную запись с ignored - наследуем
     if (entry?.status === "ignored") return true;
+    
+    // ВАЖНО: если нашли явную запись с другим статусом (не ignored),
+    // то даже если выше есть ignored предки, мы НЕ наследуем,
+    // потому что эта папка - исключение (negated pattern)
+    if (entry && entry.status !== "ignored") return false;
   }
   return false;
 }
@@ -135,13 +145,17 @@ async function runGitStatus(root: string): Promise<Map<string, GitEntry>> {
 
     map.set(normalized, { status, isDir: inferredIsDir });
 
-    for (let i = 1; i < segments.length; i += 1) {
-      const dirPath = segments.slice(0, i).join("/");
-      const existingDir = map.get(dirPath);
-      map.set(dirPath, {
-        status: promoteGitStatus(existingDir?.status, status),
-        isDir: true,
-      });
+    // Обновляем родительские папки, но НЕ распространяем ignored статус
+    // Если файл ignored, это не значит что вся папка ignored
+    if (status !== "ignored") {
+      for (let i = 1; i < segments.length; i += 1) {
+        const dirPath = segments.slice(0, i).join("/");
+        const existingDir = map.get(dirPath);
+        map.set(dirPath, {
+          status: promoteGitStatus(existingDir?.status, status),
+          isDir: true,
+        });
+      }
     }
   }
 
@@ -157,10 +171,20 @@ function getEntryStatuses(
   const direct = gitMap.get(normalized);
   const directDir = isDir ? gitMap.get(normalized + "/") : undefined;
   const inheritedIgnored = findInheritedIgnored(gitMap, normalized);
+  // Наследуем ignored статус только если родитель явно в gitMap как ignored
+  // Git не показывает каждый файл в ignored папке, только саму папку
   const effectiveDirect = direct ?? directDir ?? (inheritedIgnored ? { status: "ignored" as GitStatus, isDir: false } : undefined);
   const descendantStatuses = new Set<GitStatus>();
 
-  if (effectiveDirect) descendantStatuses.add(effectiveDirect.status);
+  // Для ФАЙЛОВ: всегда добавляем их статус в summary (даже inherited ignored)
+  // Для ПАПОК: добавляем статус только если он явно в gitMap, не унаследован
+  if (!isDir && effectiveDirect) {
+    // Файл - добавляем его статус
+    descendantStatuses.add(effectiveDirect.status);
+  } else if (isDir && (direct || directDir)) {
+    // Папка с явным статусом в gitMap - добавляем
+    descendantStatuses.add(effectiveDirect.status);
+  }
 
   if (isDir) {
     if (directDir) descendantStatuses.add(directDir.status);
@@ -168,7 +192,11 @@ function getEntryStatuses(
     const prefix = normalized ? normalized + "/" : "";
     for (const [path, entry] of gitMap.entries()) {
       if (path === normalized || path === normalized + "/") continue;
-      if (prefix && path.startsWith(prefix)) descendantStatuses.add(entry.status);
+      // Не добавляем ignored статус в summary - это "шум", не значимое изменение
+      // Папка с tracked файлами + ignored файлами = НЕ ignored папка
+      if (prefix && path.startsWith(prefix) && entry.status !== "ignored") {
+        descendantStatuses.add(entry.status);
+      }
     }
   }
 
