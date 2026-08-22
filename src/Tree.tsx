@@ -8,6 +8,7 @@ interface TreeNodeProps {
   hint: string;
   path: string;
   onError: (msg: string) => void;
+  onOpenFile: (fullPath: string, entry: Entry) => void;
   store: FileManagerStore;
 }
 
@@ -27,7 +28,7 @@ export function getFileIconVariant(name: string): FileIconVariant {
   return "default";
 }
 
-function TreeNode({ entry, hint, path, onError, store }: TreeNodeProps) {
+function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodeProps) {
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState({});
@@ -80,7 +81,10 @@ function TreeNode({ entry, hint, path, onError, store }: TreeNodeProps) {
   }, [isDir, expanded, children, hint, fullPath, entry.kind, onError]);
 
   const handleToggle = useCallback(async () => {
-    if (!isDir) return;
+    if (!isDir) {
+      onOpenFile(fullPath, entry);
+      return;
+    }
 
     if (expanded) {
       store.togglePath(fullPath);
@@ -149,7 +153,7 @@ function TreeNode({ entry, hint, path, onError, store }: TreeNodeProps) {
               hint={hint}
               path={fullPath}
               onError={onError}
-              store={store}
+              store={store} onOpenFile={onOpenFile}
             />
           ))}
         </div>
@@ -162,10 +166,11 @@ interface TreeProps {
   hint: string;
   entries: Entry[];
   onError: (msg: string) => void;
+  onOpenFile: (fullPath: string, entry: Entry) => void;
   store: FileManagerStore;
 }
 
-export function Tree({ hint, entries, onError, store }: TreeProps) {
+export function Tree({ hint, entries, onError, onOpenFile, store }: TreeProps) {
   const sorted = sortEntries(entries);
 
   if (sorted.length === 0) {
@@ -181,7 +186,7 @@ export function Tree({ hint, entries, onError, store }: TreeProps) {
           hint={hint}
           path=""
           onError={onError}
-          store={store}
+          store={store} onOpenFile={onOpenFile}
         />
       ))}
     </div>

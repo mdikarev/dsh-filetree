@@ -2,11 +2,20 @@
 
 const LS_KEY = "dsh-filemanager-open";
 const LS_EXPANDED_PREFIX = "dsh-filemanager-expanded:";
+const LS_PREVIEW_PREFIX = "dsh-filemanager-preview:";
+
+export interface PreviewLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface FileManagerState {
   open: boolean;
   expandedPaths: Set<string>;
   currentWorkspace: string | null;
+  previewLayout: PreviewLayout | null;
 }
 
 export interface FileManagerStore {
@@ -16,6 +25,7 @@ export interface FileManagerStore {
   togglePath(path: string): void;
   isExpanded(path: string): boolean;
   setWorkspace(workspaceHint: string): void;
+  setPreviewLayout(layout: PreviewLayout | null): void;
 }
 
 function loadFromStorage(): boolean {
@@ -59,11 +69,47 @@ function saveExpandedPaths(workspaceHint: string | null, paths: Set<string>): vo
   } catch {}
 }
 
+function getPreviewKey(workspaceHint: string): string {
+  return `${LS_PREVIEW_PREFIX}${workspaceHint}`;
+}
+
+function loadPreviewLayout(workspaceHint: string | null): PreviewLayout | null {
+  if (!workspaceHint) return null;
+  try {
+    const stored = localStorage.getItem(getPreviewKey(workspaceHint));
+    if (!stored) return null;
+    const parsed = JSON.parse(stored);
+    if (
+      parsed &&
+      typeof parsed.x === "number" &&
+      typeof parsed.y === "number" &&
+      typeof parsed.width === "number" &&
+      typeof parsed.height === "number"
+    ) {
+      return parsed as PreviewLayout;
+    }
+  } catch {}
+  return null;
+}
+
+function savePreviewLayout(workspaceHint: string | null, layout: PreviewLayout | null): void {
+  if (!workspaceHint) return;
+  try {
+    const key = getPreviewKey(workspaceHint);
+    if (layout === null) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(layout));
+    }
+  } catch {}
+}
+
 export function createStore(): FileManagerStore {
   let state: FileManagerState = { 
     open: loadFromStorage(),
     expandedPaths: new Set(),
-    currentWorkspace: null
+    currentWorkspace: null,
+    previewLayout: null
   };
   const listeners = new Set<() => void>();
 
@@ -106,11 +152,18 @@ export function createStore(): FileManagerStore {
       
       // Загружаем состояние для нового воркспейса
       const expandedPaths = loadExpandedPaths(workspaceHint);
+      const previewLayout = loadPreviewLayout(workspaceHint);
       state = {
         ...state,
         currentWorkspace: workspaceHint,
-        expandedPaths
+        expandedPaths,
+        previewLayout
       };
+      listeners.forEach((l) => l());
+    },
+    setPreviewLayout: (layout: PreviewLayout | null) => {
+      state = { ...state, previewLayout: layout };
+      savePreviewLayout(state.currentWorkspace, layout);
       listeners.forEach((l) => l());
     },
   };

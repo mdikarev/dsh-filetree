@@ -1,4 +1,4 @@
-import { readdir, stat, realpath, lstat } from "node:fs/promises";
+import { readdir, stat, realpath, lstat, open } from "node:fs/promises";
 import { resolve, sep, basename, join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
@@ -12,6 +12,7 @@ type GitEntry = {
 
 const HIDDEN_SYSTEM = new Set([".git"]);
 const MAX_ENTRIES = 2000;
+const MAX_READ_BYTES = 5 * 1024 * 1024;
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -21,6 +22,38 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   });
   res.end(text);
 }
+
+function isTextByExtension(name: string): boolean {
+  const ext = name.toLowerCase().split('.').pop() ?? '';
+  const TEXT_EXT = new Set([
+    'md','txt','rst','log','json','yml','yaml','toml','ini','env',
+    'ts','tsx','js','jsx','mjs','cjs',
+    'css','html','xml','graphql','proto','sql','csv',
+    'py','rs','go','java','kt','kts','c','h','cpp','cc','cs','php','rb','sh','bash','zsh'
+  ]);
+  if (name === 'Dockerfile') return true;
+  return TEXT_EXT.has(ext);
+}
+
+async function readTextChunk(filePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean }> {
+  const fh = await open(filePath, 'r');
+  try {
+    const statInfo = await fh.stat();
+    const toRead = Math.min(statInfo.size, maxBytes);
+    const buf = Buffer.alloc(toRead);
+    await fh.read(buf, 0, toRead, 0);
+    let content: string;
+    try {
+      content = buf.toString('utf8');
+    } catch {
+      throw Object.assign(new Error('unsupported content type'), { code: 'UNSUPPORTED' });
+    }
+    return { content, truncated: statInfo.size > maxBytes };
+  } finally {
+    await fh.close();
+  }
+}
+
 
 function isInside(root: string, target: string): boolean {
   return target === root || target.startsWith(root + sep);
@@ -291,6 +324,43 @@ export function createHandler(defaultRoot: string) {
           return send(res, 200, { entries: result, ...(truncated && { truncated: true }) });
         }
 
+        
+        case "read": {
+          const relPath = url.searchParams.get("path") ?? "";
+          const target = resolve(root, relPath);
+
+          if (!isInside(root, target)) {
+            return send(res, 403, { error: "path escapes workspace" });
+          }
+
+          const realTarget = await realpath(target).catch(() => null as any);
+          if (!realTarget) {
+            return send(res, 404, { error: "not found" });
+          }
+          if (!isInside(root, realTarget)) {
+            return send(res, 403, { error: "path escapes workspace" });
+          }
+
+          const st = await stat(realTarget);
+          if (!st.isFile()) {
+            return send(res, 400, { error: "not a file" });
+          }
+
+          const name = basename(realTarget);
+          if (!isTextByExtension(name)) {
+            return send(res, 400, { error: "unsupported content type" });
+          }
+
+          try {
+            const { content, truncated } = await readTextChunk(realTarget, MAX_READ_BYTES);
+            return send(res, 200, { name, path: relPath, content, ...(truncated && { truncated: true }) });
+          } catch (e: any) {
+            if (e?.code === 'UNSUPPORTED') {
+              return send(res, 400, { error: "unsupported content type" });
+            }
+            throw e;
+          }
+        }
         default:
           return send(res, 404, { error: `unknown action: ${action}` });
       }

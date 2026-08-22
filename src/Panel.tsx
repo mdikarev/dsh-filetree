@@ -1,6 +1,8 @@
 // src/Panel.tsx
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchRoot, fetchList, sortEntries, type Entry } from "./api.js";
+import { fetchFile } from "./preview-api.js";
+import { clampPosition, type Point } from "./preview-position.js";
 import { Tree } from "./Tree.js";
 import type { FileManagerStore } from "./store.js";
 
@@ -20,6 +22,27 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [rootPath, setRootPath] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewTitle, setPreviewTitle] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [previewContent, setPreviewContent] = useState("");
+  const [previewTruncated, setPreviewTruncated] = useState(false);
+  const [previewPos, setPreviewPos] = useState<Point | null>(null);
+  const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+
+  const previewWindowRef = useRef<HTMLDivElement | null>(null);
+  const previewPosRef = useRef<Point | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
+  const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  // Keep a ref in sync with the position state so drag-start always sees the
+  // latest position (also across multiple consecutive drags).
+  useEffect(() => {
+    previewPosRef.current = previewPos;
+  }, [previewPos]);
 
   // Устанавливаем текущий воркспейс в store при изменении hint
   useEffect(() => {
@@ -51,6 +74,125 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [hint]);
 
+  const commitLayout = useCallback(() => {
+    const el = previewWindowRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    store.setPreviewLayout({
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, [store]);
+
+  const handleOpenFile = useCallback(async (fullPath: string, entry: Entry) => {
+    if (!hint) return;
+    // Восстанавливаем сохранённое расположение панели для этого воркспейса
+    const layout = store.getState().previewLayout;
+    setPreviewPos(layout ? { x: layout.x, y: layout.y } : null);
+    setPreviewSize(layout ? { width: layout.width, height: layout.height } : null);
+    setPreviewTitle(entry.name);
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewError("");
+    setPreviewContent("");
+    try {
+      const res = await fetchFile(hint, fullPath);
+      setPreviewContent(res.content);
+      setPreviewTruncated(Boolean(res.truncated));
+    } catch (err: any) {
+      setPreviewError(err?.message ?? String(err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [hint, store]);
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewOpen(false);
+    setPreviewPos(null);
+    setPreviewSize(null);
+    dragRef.current = null;
+  }, []);
+
+  const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    // Не перетаскиваем, если нажатие пришлось на кнопку (например, ✕)
+    if ((e.target as HTMLElement).closest("button")) return;
+    const el = previewWindowRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const current = previewPosRef.current ?? { x: rect.left, y: rect.top };
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: current.x,
+      origY: current.y,
+    };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    e.preventDefault();
+  }, []);
+
+  const handleDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    const el = previewWindowRef.current;
+    if (!d || !el) return;
+    const nx = d.origX + (e.clientX - d.startX);
+    const ny = d.origY + (e.clientY - d.startY);
+    const rect = el.getBoundingClientRect();
+    const clamped = clampPosition(
+      nx,
+      ny,
+      rect.width,
+      rect.height,
+      window.innerWidth,
+      window.innerHeight
+    );
+    setPreviewPos(clamped);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    dragRef.current = null;
+    commitLayout();
+  }, [commitLayout]);
+
+  // Следим за изменением размера (CSS resize) и сохраняем layout по воркспейсу
+  useEffect(() => {
+    if (!previewOpen) return;
+    const el = previewWindowRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
+      const next = { width: rect.width, height: rect.height };
+      const prev = lastSizeRef.current;
+      // Обновляем state только при реальном изменении размера,
+      // иначе каждый кадр порождает ре-рендер (и рост панели).
+      if (!prev || prev.width !== next.width || prev.height !== next.height) {
+        lastSizeRef.current = next;
+        setPreviewSize(next);
+      }
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => {
+        store.setPreviewLayout({
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        });
+      }, 250);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [previewOpen, store]);
+
   // Load on mount and when hint changes
   useEffect(() => {
     loadRoot();
@@ -65,49 +207,103 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     console.warn("[filemanager]", msg);
   }, []);
 
+  const previewStyle: React.CSSProperties = {
+    ...(previewPos ? { left: previewPos.x, top: previewPos.y, right: "auto" } : {}),
+    ...(previewSize ? { width: previewSize.width, height: previewSize.height } : {}),
+  };
+
   return (
-    <div
-      className={`fm-panel-clip${open ? " fm-panel-clip--open" : ""}`}
-      style={{ left: sidebarLeft }}
-    >
-      <div className={`fm-panel${open ? " fm-panel--open" : ""}`}>
-        <div className="fm-header">
-          <span className="fm-header-title" title={rootPath}>
-            {rootName || "Файлы"}
-          </span>
-          <button
-            className="fm-header-btn"
-            onClick={handleRefresh}
-            title="Обновить"
-          >
-            ↻
-          </button>
-          <button className="fm-header-btn" onClick={onClose} title="Закрыть">
-            ✕
-          </button>
+    <>
+      <div
+        className={`fm-panel-clip${open ? " fm-panel-clip--open" : ""}`}
+        style={{ left: sidebarLeft }}
+      >
+        <div className={`fm-panel${open ? " fm-panel--open" : ""}`}>
+          <div className="fm-header">
+            <span className="fm-header-title" title={rootPath}>
+              {rootName || "Файлы"}
+            </span>
+            <button
+              className="fm-header-btn"
+              onClick={handleRefresh}
+              title="Обновить"
+            >
+              ↻
+            </button>
+            <button className="fm-header-btn" onClick={onClose} title="Закрыть">
+              ✕
+            </button>
+          </div>
+
+          {status === "loading" && (
+            <div className="fm-loading">
+              <span className="fm-spinner" /> Загрузка…
+            </div>
+          )}
+
+          {status === "error" && (
+            <div className="fm-error">
+              <div>Ошибка: {error}</div>
+              <button onClick={handleRefresh}>Повторить</button>
+            </div>
+          )}
+
+          {status === "no-workspace" && (
+            <div className="fm-empty">Нет воркспейса</div>
+          )}
+
+          {status === "ready" && (
+            <Tree
+              hint={hint}
+              entries={entries}
+              onError={handleError}
+              store={store}
+              onOpenFile={handleOpenFile}
+            />
+          )}
         </div>
-
-        {status === "loading" && (
-          <div className="fm-loading">
-            <span className="fm-spinner" /> Загрузка…
-          </div>
-        )}
-
-        {status === "error" && (
-          <div className="fm-error">
-            <div>Ошибка: {error}</div>
-            <button onClick={handleRefresh}>Повторить</button>
-          </div>
-        )}
-
-        {status === "no-workspace" && (
-          <div className="fm-empty">Нет воркспейса</div>
-        )}
-
-        {status === "ready" && (
-          <Tree hint={hint} entries={entries} onError={handleError} store={store} />
-        )}
       </div>
-    </div>
+
+      {previewOpen && (
+        <div
+          className="fm-preview-window"
+          ref={previewWindowRef}
+          style={previewStyle}
+        >
+          <div
+            className="fm-preview-header"
+            onPointerDown={handleDragStart}
+            onPointerMove={handleDragMove}
+            onPointerUp={handleDragEnd}
+            onPointerCancel={handleDragEnd}
+          >
+            <span className="fm-preview-title">{previewTitle}</span>
+            <button
+              className="fm-preview-close"
+              onClick={handleClosePreview}
+              title="Закрыть"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="fm-preview-body">
+            {previewLoading && (
+              <div className="fm-loading">
+                <span className="fm-spinner" /> Загрузка…
+              </div>
+            )}
+            {!previewLoading && previewError && (
+              <div className="fm-error">Ошибка: {previewError}</div>
+            )}
+            {!previewLoading && !previewError && (
+              <pre className="fm-modal-pre">{previewContent}</pre>
+            )}
+            {!previewLoading && previewTruncated && (
+              <div className="fm-empty">(усечено до 5 МБ)</div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
