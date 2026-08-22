@@ -4,7 +4,11 @@ import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createHandler } from "../src/fs-api.js";
+
+const execFileAsync = promisify(execFile);
 
 function request(
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,
@@ -68,12 +72,23 @@ describe("fs-api", () => {
     before(async () => {
       // Create test structure
       await mkdir(join(tempDir, "subdir"));
-      await mkdir(join(tempDir, "node_modules")); // should be filtered
+      await mkdir(join(tempDir, "node_modules"));
       await mkdir(join(tempDir, ".git")); // should be filtered
       await mkdir(join(tempDir, ".hidden")); // dotfile dir, should appear
       await writeFile(join(tempDir, "file.txt"), "hello");
       await writeFile(join(tempDir, ".dotfile"), "secret");
       await writeFile(join(tempDir, "subdir", "nested.js"), "code");
+      await writeFile(join(tempDir, ".gitignore"), `node_modules/\nignored-dir/\nignored-file.log\n`);
+      await mkdir(join(tempDir, "ignored-dir"));
+      await writeFile(join(tempDir, "ignored-file.log"), "skip me");
+
+      await execFileAsync("git", ["init"], { cwd: tempDir });
+      await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+      await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+      await execFileAsync("git", ["add", ".gitignore", "file.txt", ".dotfile", "subdir/nested.js"], { cwd: tempDir });
+      await execFileAsync("git", ["commit", "-m", "init"], { cwd: tempDir });
+      await writeFile(join(tempDir, "subdir", "nested.js"), "changed after commit");
+
     });
 
     it("lists root directory entries", async () => {
@@ -87,7 +102,7 @@ describe("fs-api", () => {
       const names = entries.map((e) => e.name);
 
       // Check filtering
-      assert.ok(!names.includes("node_modules"), "node_modules should be filtered");
+      assert.ok(names.includes("node_modules"), "ignored node_modules should be visible");
       assert.ok(!names.includes(".git"), ".git should be filtered");
 
       // Check dotfiles present
@@ -105,11 +120,32 @@ describe("fs-api", () => {
         `/filemanager-fs/list?hint=${encodeURIComponent(tempDir)}&path=`,
         { "x-dsh-filemanager": "1" }
       );
-      const entries = (body as any).entries as Array<{ name: string; kind: string }>;
+      const entries = (body as any).entries as Array<{ name: string; kind: string; gitStatus?: string; gitStatusSummary?: string[] }>;
       const subdir = entries.find((e) => e.name === "subdir");
       const file = entries.find((e) => e.name === "file.txt");
       assert.strictEqual(subdir?.kind, "dir");
+      assert.strictEqual(subdir?.gitStatus, "modified");
+      assert.deepStrictEqual(subdir?.gitStatusSummary, ["modified"]);
       assert.strictEqual(file?.kind, "file");
+    });
+
+    it("includes ignored file and directory git markers", async () => {
+      const { status, body } = await request(
+        handler,
+        `/filemanager-fs/list?hint=${encodeURIComponent(tempDir)}&path=`,
+        { "x-dsh-filemanager": "1" }
+      );
+
+      assert.strictEqual(status, 200);
+      const entries = (body as any).entries as Array<{ name: string; kind: string; gitStatus?: string; gitStatusSummary?: string[] }>;
+      const ignoredDir = entries.find((entry) => entry.name === "ignored-dir");
+      const ignoredFile = entries.find((entry) => entry.name === "ignored-file.log");
+      const subdir = entries.find((entry) => entry.name === "subdir");
+      assert.strictEqual(ignoredDir?.gitStatus, undefined);
+      assert.deepStrictEqual(ignoredDir?.gitStatusSummary, undefined);
+      assert.strictEqual(ignoredFile?.gitStatus, "ignored");
+      assert.strictEqual(subdir?.gitStatus, "modified");
+      assert.deepStrictEqual(subdir?.gitStatusSummary, ["modified"]);
     });
 
     it("lists nested directory", async () => {

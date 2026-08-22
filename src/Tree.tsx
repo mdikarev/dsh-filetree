@@ -1,6 +1,6 @@
 // src/Tree.tsx
 import { useState, useEffect, useCallback } from "react";
-import { fetchList, sortEntries, type Entry } from "./api.js";
+import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry } from "./api.js";
 
 interface TreeNodeProps {
   entry: Entry;
@@ -33,6 +33,11 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
   const isDir = entry.kind === "dir" || entry.kind === "symlink-dir";
   const fullPath = path ? `${path}/${entry.name}` : entry.name;
   const fileIconVariant = getFileIconVariant(entry.name);
+  const entryTone = getEntryGitTone(entry);
+  const gitStatus = isDir ? getDirectoryGitStatus(entry) : entry.gitStatus ?? null;
+  const gitBadge = getGitStatusBadge(gitStatus ?? undefined);
+  const showFolderIndicator = isDir && gitStatus !== "ignored" && gitBadge !== null;
+  const showFileIndicator = !isDir && gitBadge !== null;
 
   const handleToggle = useCallback(async () => {
     if (!isDir) return;
@@ -67,7 +72,7 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
   return (
     <div>
       <div
-        className={`fm-row${isDir ? " fm-row--dir" : ""}`}
+        className={`fm-row${isDir ? " fm-row--dir" : ""}${entryTone ? ` fm-row--${entryTone}` : ""}`}
         onClick={handleToggle}
       >
         <span className="fm-row-chevron">
@@ -84,6 +89,15 @@ function TreeNode({ entry, hint, path, onError }: TreeNodeProps) {
           </span>
         )}
         <span className="fm-row-name">{entry.name}</span>
+        {(showFolderIndicator || showFileIndicator) && (
+          <span
+            className={`fm-git-badge fm-git-badge--${entryTone ?? "changed"}${isDir ? " fm-git-badge--dir" : ""}`}
+            aria-label={`Git status: ${gitStatus}`}
+            title={`Git status: ${gitStatus}`}
+          >
+            {isDir ? "•" : gitBadge}
+          </span>
+        )}
         {loading && <span className="fm-spinner" />}
       </div>
       {expanded && children && children.length > 0 && (

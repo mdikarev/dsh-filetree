@@ -18,6 +18,10 @@ export const CSS_STRING = `
   --fm-file-doc: #8b7c72;
   --fm-file-image: #84789a;
   --fm-file-special: #9a806a;
+  --fm-git-changed: #d59b47;
+  --fm-git-untracked: #5ea7c9;
+  --fm-git-ignored: #8b819e;
+  --fm-git-ignored-text: color-mix(in srgb, var(--dsw-alias-label-secondary) 55%, var(--fm-git-ignored) 45%);
 }
 
 body[data-ds-dark-theme] {
@@ -35,6 +39,10 @@ body[data-ds-dark-theme] {
   --fm-file-doc: #958378;
   --fm-file-image: #8d82a2;
   --fm-file-special: #aa8d73;
+  --fm-git-changed: #e0aa58;
+  --fm-git-untracked: #6ab8db;
+  --fm-git-ignored: #9b90ae;
+  --fm-git-ignored-text: color-mix(in srgb, var(--dsw-alias-label-secondary) 58%, var(--fm-git-ignored) 42%);
 }
 
 /* Toggle tab */
@@ -248,6 +256,46 @@ body[data-ds-dark-theme] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.fm-row--ignored {
+  color: var(--fm-git-ignored-text);
+  opacity: 0.82;
+}
+.fm-row--ignored .fm-row-chevron {
+  color: color-mix(in srgb, var(--fm-git-ignored-text) 72%, transparent);
+}
+.fm-git-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+.fm-git-badge--changed {
+  color: var(--fm-git-changed);
+}
+.fm-git-badge--untracked {
+  color: var(--fm-git-untracked);
+}
+.fm-git-badge--ignored {
+  color: var(--fm-git-ignored);
+}
+.fm-git-badge--dir {
+  min-width: 12px;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  font-size: 12px;
+  border-radius: 999px;
 }
 .fm-row-children {
   margin-left: 16px;

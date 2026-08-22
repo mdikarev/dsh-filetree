@@ -2,10 +2,14 @@
 
 const HEADER = { "x-dsh-filemanager": "1" };
 
+export type GitStatus = "modified" | "added" | "deleted" | "untracked" | "ignored";
+
 export interface Entry {
   name: string;
   kind: "dir" | "file" | "symlink-dir" | "symlink-file";
   size?: number;
+  gitStatus?: GitStatus;
+  gitStatusSummary?: GitStatus[];
 }
 
 export interface RootResponse {
@@ -37,7 +41,6 @@ export function fetchList(hint: string, path: string): Promise<ListResponse> {
   return fetchJson<ListResponse>(url);
 }
 
-// Sort: directories first, then files, alphabetically case-insensitive
 export function sortEntries(entries: Entry[]): Entry[] {
   return [...entries].sort((a, b) => {
     const aIsDir = a.kind === "dir" || a.kind === "symlink-dir";
@@ -47,7 +50,6 @@ export function sortEntries(entries: Entry[]): Entry[] {
   });
 }
 
-// Color by extension for file dot markers
 const EXT_COLORS: Record<string, string> = {
   ts: "#3178c6",
   tsx: "#3178c6",
@@ -72,4 +74,43 @@ export function getFileColor(name: string): string {
   if (dot < 1) return "#9ca3af";
   const ext = name.slice(dot + 1).toLowerCase();
   return EXT_COLORS[ext] ?? "#9ca3af";
+}
+
+export function getGitStatusBadge(status?: GitStatus): string | null {
+  switch (status) {
+    case "modified":
+      return "M";
+    case "added":
+      return "A";
+    case "deleted":
+      return "D";
+    case "untracked":
+      return "?";
+    case "ignored":
+      return "I";
+    default:
+      return null;
+  }
+}
+
+export function getDirectoryGitStatus(entry: Entry): GitStatus | null {
+  if (entry.gitStatus) return entry.gitStatus;
+  const statuses = entry.gitStatusSummary ?? [];
+  if (statuses.some((status) => status === "modified" || status === "added" || status === "deleted")) {
+    return "modified";
+  }
+  if (statuses.includes("untracked")) return "untracked";
+  if (statuses.includes("ignored")) return "ignored";
+  return null;
+}
+
+export function getEntryGitTone(entry: Entry): "changed" | "untracked" | "ignored" | null {
+  const status = (entry.kind === "dir" || entry.kind === "symlink-dir")
+    ? getDirectoryGitStatus(entry)
+    : entry.gitStatus ?? null;
+
+  if (!status) return null;
+  if (status === "ignored") return "ignored";
+  if (status === "untracked") return "untracked";
+  return "changed";
 }
