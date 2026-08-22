@@ -148,6 +148,21 @@ describe("fs-api", () => {
       assert.deepStrictEqual(subdir?.gitStatusSummary, ["modified"]);
     });
 
+    it("marks contents of ignored directories as ignored", async () => {
+      await mkdir(join(tempDir, "ignored-dir", "inner"));
+      await writeFile(join(tempDir, "ignored-dir", "inner", "secret.txt"), "x");
+
+      const { status, body } = await request(
+        handler,
+        `/filemanager-fs/list?hint=${encodeURIComponent(tempDir)}&path=ignored-dir/inner`,
+        { "x-dsh-filemanager": "1" }
+      );
+      assert.strictEqual(status, 200);
+      const entries = (body as any).entries as Array<{ name: string; kind: string; gitStatus?: string; gitStatusSummary?: string[] }>;
+      assert.strictEqual(entries.find((e) => e.name === "secret.txt")?.gitStatus, "ignored");
+      assert.deepStrictEqual(entries.find((e) => e.name === "secret.txt")?.gitStatusSummary, ["ignored"]);
+    });
+
     it("lists nested directory", async () => {
       const { status, body } = await request(
         handler,

@@ -71,6 +71,16 @@ function pathSegments(relativePath: string): string[] {
   return relativePath.split("/").filter(Boolean);
 }
 
+function findInheritedIgnored(gitMap: Map<string, GitEntry>, normalized: string): boolean {
+  const segments = pathSegments(normalized);
+  for (let i = segments.length - 1; i >= 1; i -= 1) {
+    const ancestor = segments.slice(0, i).join("/");
+    const entry = gitMap.get(ancestor) ?? gitMap.get(ancestor + "/");
+    if (entry?.status === "ignored") return true;
+  }
+  return false;
+}
+
 export function debugCollectStatuses(root: string): Promise<Map<string, GitEntry>> {
   return runGitStatus(root);
 }
@@ -146,7 +156,8 @@ function getEntryStatuses(
   const normalized = normalizeGitPath(relPath).replace(/\/+$/, "");
   const direct = gitMap.get(normalized);
   const directDir = isDir ? gitMap.get(normalized + "/") : undefined;
-  const effectiveDirect = direct ?? directDir;
+  const inheritedIgnored = findInheritedIgnored(gitMap, normalized);
+  const effectiveDirect = direct ?? directDir ?? (inheritedIgnored ? { status: "ignored" as GitStatus, isDir: false } : undefined);
   const descendantStatuses = new Set<GitStatus>();
 
   if (effectiveDirect) descendantStatuses.add(effectiveDirect.status);
