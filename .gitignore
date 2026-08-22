@@ -2,3 +2,4 @@ node_modules/
 lib/
 .npm-cache/
 .doc-canon/
+.dsh/
