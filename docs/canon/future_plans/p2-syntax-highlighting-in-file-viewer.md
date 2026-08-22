@@ -26,6 +26,6 @@
 
 ---
 
-Status: draft
+Status: absorbed
 Depends: текстовый предпросмотр (endpoint read) реализован
 Unblocks: комфортное чтение и ревью исходного кода прямо в плагине

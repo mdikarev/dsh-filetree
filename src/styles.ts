@@ -406,4 +406,49 @@ body[data-ds-dark-theme] {
   padding: 12px;
 }
 
+.fm-modal-pre--highlighted .hljs-comment,
+.fm-modal-pre--highlighted .hljs-quote {
+  color: var(--dsw-alias-label-tertiary);
+}
+.fm-modal-pre--highlighted .hljs-keyword,
+.fm-modal-pre--highlighted .hljs-selector-tag,
+.fm-modal-pre--highlighted .hljs-literal {
+  color: var(--dsw-alias-brand-primary);
+}
+.fm-modal-pre--highlighted .hljs-type,
+.fm-modal-pre--highlighted .hljs-built_in {
+  color: var(--fm-file-data);
+}
+.fm-modal-pre--highlighted .hljs-string,
+.fm-modal-pre--highlighted .hljs-regexp,
+.fm-modal-pre--highlighted .hljs-attr {
+  color: var(--fm-git-untracked);
+}
+.fm-modal-pre--highlighted .hljs-number,
+.fm-modal-pre--highlighted .hljs-symbol {
+  color: var(--fm-file-image);
+}
+.fm-modal-pre--highlighted .hljs-title,
+.fm-modal-pre--highlighted .hljs-name,
+.fm-modal-pre--highlighted .hljs-function {
+  color: var(--fm-file-code);
+}
+.fm-modal-pre--highlighted .hljs-params,
+.fm-modal-pre--highlighted .hljs-property {
+  color: var(--dsw-alias-label-secondary);
+}
+.fm-modal-pre--highlighted .hljs-punctuation {
+  color: var(--dsw-alias-label-tertiary);
+}
+.fm-modal-pre--highlighted .hljs-operator {
+  color: var(--fm-git-changed);
+}
+.fm-modal-pre--highlighted .hljs-meta,
+.fm-modal-pre--highlighted .hljs-doctag {
+  color: var(--fm-file-doc);
+}
+.fm-modal-pre--highlighted .hljs-variable {
+  color: var(--fm-file-special);
+}
+
 `;

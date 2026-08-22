@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchRoot, fetchList, sortEntries, type Entry } from "./api.js";
 import { fetchFile } from "./preview-api.js";
+import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree } from "./Tree.js";
 import type { FileManagerStore } from "./store.js";
@@ -211,6 +212,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     ...(previewPos ? { left: previewPos.x, top: previewPos.y, right: "auto" } : {}),
     ...(previewSize ? { width: previewSize.width, height: previewSize.height } : {}),
   };
+  const highlightedPreview = highlightSource(previewTitle, previewContent, previewTruncated);
 
   return (
     <>
@@ -295,7 +297,13 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             {!previewLoading && previewError && (
               <div className="fm-error">Ошибка: {previewError}</div>
             )}
-            {!previewLoading && !previewError && (
+            {!previewLoading && !previewError && highlightedPreview.highlighted && (
+              <pre
+                className="fm-modal-pre fm-modal-pre--highlighted"
+                dangerouslySetInnerHTML={{ __html: highlightedPreview.html ?? "" }}
+              />
+            )}
+            {!previewLoading && !previewError && !highlightedPreview.highlighted && (
               <pre className="fm-modal-pre">{previewContent}</pre>
             )}
             {!previewLoading && previewTruncated && (
