@@ -143,3 +143,59 @@ describe("store expanded paths", () => {
     assert.deepStrictEqual(JSON.parse(values.get("dsh-filemanager-expanded:/ws") ?? "[]"), ["src"]);
   });
 });
+
+
+describe("store expanded path pruning", () => {
+  it("prunes stale expanded paths and persists the change", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    store.togglePath("src/gone");
+    store.pruneExpandedPaths(["src/gone"]);
+    assert.deepStrictEqual(store.getExpandedPaths(), ["src"]);
+    assert.deepStrictEqual(JSON.parse(values.get("dsh-filemanager-expanded:/ws") ?? "[]"), ["src"]);
+  });
+
+  it("notifies expanded subscribers only when something was actually pruned", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    let notifications = 0;
+    const unsubscribe = store.subscribeExpandedPaths(() => notifications++);
+    store.pruneExpandedPaths(["nope"]);
+    assert.strictEqual(notifications, 0);
+    store.pruneExpandedPaths(["src"]);
+    assert.strictEqual(notifications, 1);
+    assert.deepStrictEqual(store.getExpandedPaths(), []);
+    unsubscribe();
+  });
+
+  it("is a no-op for an empty prune list", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    let notifications = 0;
+    store.subscribeExpandedPaths(() => notifications++);
+    store.pruneExpandedPaths([]);
+    assert.strictEqual(notifications, 0);
+    assert.deepStrictEqual(store.getExpandedPaths(), ["src"]);
+  });
+});

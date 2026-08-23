@@ -36,22 +36,28 @@ function isInside(root: string, target: string): boolean {
   return target === root || target.startsWith(root + sep);
 }
 
-/** Same hint semantics as fs-api: prefer a valid directory hint, else fall back. */
-async function resolveRoot(hint: string | null, fallback: string): Promise<string> {
-  if (hint && hint.length > 0) {
-    try {
-      const real = await realpath(hint);
-      const st = await stat(real);
-      if (st.isDirectory()) return real;
-    } catch {
-      // fall through to the default root
-    }
+/**
+ * Strict hint resolution for the events endpoint: the hint is the workspace
+ * identity of the subscription, so an absent or invalid hint rejects the
+ * request instead of silently falling back to the default root (which would
+ * watch and stream the wrong workspace). root/list/read keep their own
+ * fallback semantics; this strictness applies to events only.
+ */
+async function resolveStrictHint(hint: string | null): Promise<string> {
+  if (hint === null || hint.trim() === "") {
+    throw clientError(400, "hint is required");
   }
+  let real: string;
   try {
-    return await realpath(fallback);
+    real = await realpath(hint);
   } catch {
-    return fallback;
+    throw clientError(400, "invalid hint: " + hint);
   }
+  const st = await stat(real);
+  if (!st.isDirectory()) {
+    throw clientError(400, "invalid hint (not a directory): " + hint);
+  }
+  return real;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -197,7 +203,7 @@ export function createEventsHandler(defaultRoot: string) {
       }
 
       const hint = url.searchParams.get("hint");
-      const root = await resolveRoot(hint, defaultRoot);
+      const root = await resolveStrictHint(hint);
       const paths = parseWatchedPaths(url.searchParams.get("paths"));
 
       // Validate every path before creating any watcher.

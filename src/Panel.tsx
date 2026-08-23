@@ -1,12 +1,12 @@
 // src/Panel.tsx
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
-import { fetchRoot, fetchList, sortEntries, type Entry } from "./api.js";
+import { fetchRoot, fetchList, sortEntries, type Entry, type ListResponse } from "./api.js";
 import { fetchFile } from "./preview-api.js";
 import { isMarkdownFile, renderMarkdown } from "./markdown-preview.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
-import { createLiveRefreshCoordinator, type FileChange } from "./live-refresh.js";
+import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
 import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
@@ -143,6 +143,19 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     console.warn("[filemanager]", msg);
   }, []);
 
+  // When a root listing no longer contains an expanded top-level directory,
+  // that directory (and its expanded descendants) cannot exist anymore; prune
+  // it from the store so the live subscription stops watching a missing path.
+  const pruneRootStale = useCallback((listRes: ListResponse) => {
+    if (listRes.truncated) return;
+    const stale = staleExpandedPathsUnder(
+      "",
+      listRes.entries.map((entry) => entry.name),
+      store.getExpandedPaths()
+    );
+    if (stale.length > 0) store.pruneExpandedPaths(stale);
+  }, [store]);
+
   const loadRoot = useCallback(async () => {
     if (!hint) {
       setStatus("no-workspace");
@@ -159,12 +172,13 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
 
       const listRes = await fetchList(hint, "");
       setEntries(sortEntries(listRes.entries));
+      pruneRootStale(listRes);
       setStatus("ready");
     } catch (err: any) {
       setError(err.message);
       setStatus("error");
     }
-  }, [hint]);
+  }, [hint, pruneRootStale]);
 
   // Live refresh of the root listing without flashing the loading state;
   // the last known entries are preserved on failure.
@@ -176,10 +190,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       setRootName(rootRes.name);
       const listRes = await fetchList(hint, "");
       setEntries(sortEntries(listRes.entries));
+      pruneRootStale(listRes);
     } catch (err: any) {
       handleError(`Failed to refresh root: ${err.message}`);
     }
-  }, [hint, handleError]);
+  }, [hint, handleError, pruneRootStale]);
 
   // Route affected directories from the live-refresh coordinator: the root
   // listing is owned by the Panel, deeper directories by the Tree handle.

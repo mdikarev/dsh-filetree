@@ -11,11 +11,14 @@ import {
   affectedDirsForChanges,
   backoffDelay,
   samePathSet,
+  watchPathsWithRoot,
+  staleExpandedPathsUnder,
   LIVE_REFRESH_DEBOUNCE_MS,
   type FileChange,
   type LiveEventSource,
 } from "../src/live-refresh.js";
 import { buildEventsUrl } from "../src/api.js";
+import { createStore } from "../src/store.js";
 import type { PolledEntry } from "../src/live-polling.js";
 
 class FakeEventSource implements LiveEventSource {
@@ -196,13 +199,86 @@ describe("live refresh coordinator", () => {
     });
   });
 
+  describe("watchPathsWithRoot", () => {
+    it("includes the root for an empty expanded set", () => {
+      assert.deepStrictEqual(watchPathsWithRoot([]), [""]);
+    });
+
+    it("prepends the root to the expanded paths", () => {
+      assert.deepStrictEqual(watchPathsWithRoot(["src", "test"]), ["", "src", "test"]);
+    });
+
+    it("deduplicates an expanded root", () => {
+      assert.deepStrictEqual(watchPathsWithRoot(["", "src"]), ["", "src"]);
+    });
+  });
+
+  describe("staleExpandedPathsUnder", () => {
+    it("returns expanded children missing from the parent listing", () => {
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("src", ["a.ts", "components"], ["src", "src/components", "src/gone"]),
+        ["src/gone"]
+      );
+    });
+
+    it("prunes the whole subtree of a removed directory", () => {
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("src", ["a.ts"], ["src", "src/components", "src/components/deep", "src/keep"]),
+        ["src/components", "src/components/deep", "src/keep"]
+      );
+    });
+
+    it("ignores unrelated paths and the parent itself", () => {
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("src", ["a.ts"], ["src", "test", "lib/x", "src/x"]),
+        ["src/x"]
+      );
+    });
+
+    it("handles the root as the parent", () => {
+      // Only the first segment is checked, so a subtree under a present
+      // top-level dir is not pruned by the root listing alone.
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("", ["README.md", "src"], ["src", "src/components", "test"]),
+        ["test"]
+      );
+      // When the top-level dir itself is gone, its whole subtree is stale.
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("", ["README.md"], ["src", "src/components", "test"]),
+        ["src", "src/components", "test"]
+      );
+    });
+
+    it("returns nothing when every expanded child is present", () => {
+      assert.deepStrictEqual(
+        staleExpandedPathsUnder("src", ["a.ts", "components"], ["src", "src/components"]),
+        []
+      );
+    });
+  });
+
   describe("EventSource lifecycle", () => {
-    it("opens one source keyed by the encoded hint and expanded paths", () => {
+    it("opens one source keyed by the encoded hint, the root and expanded paths", () => {
       const { harness, coordinator } = makeHarness({ hint: "/work space", expanded: ["src/a b", "test"] });
       coordinator.start();
       assert.equal(harness.urls.length, 1);
-      assert.equal(harness.urls[0], buildEventsUrl("/work space", ["src/a b", "test"]));
+      assert.equal(harness.urls[0], buildEventsUrl("/work space", ["", "src/a b", "test"]));
       assert.ok(!harness.urls[0].includes("+"), "spaces must be %20, not +");
+    });
+
+    it("always watches the root (empty path) alongside the expanded directories", () => {
+      const first = makeHarness({ expanded: [] });
+      first.coordinator.start();
+      assert.equal(first.harness.created.length, 1);
+      const params = new URLSearchParams(first.harness.urls[0].split("?")[1]);
+      assert.deepStrictEqual(JSON.parse(params.get("paths") ?? ""), [""]);
+
+      const second = makeHarness({ expanded: ["src", "test"] });
+      second.coordinator.start();
+      const params2 = new URLSearchParams(second.harness.urls[0].split("?")[1]);
+      assert.deepStrictEqual(JSON.parse(params2.get("paths") ?? ""), ["", "src", "test"]);
+      first.coordinator.stop();
+      second.coordinator.stop();
     });
 
     it("reconnects when the expanded-path set changes and closes the old source first", () => {
@@ -383,6 +459,25 @@ describe("live refresh coordinator", () => {
       coordinator.stop();
     });
 
+    it("polls the root (empty path) alongside the expanded directories", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.includes("src"));
+      assert.ok(harness.listDirCalls.includes(""), "root is polled so top-level changes are detected");
+
+      // A change in the root listing invalidates the root.
+      harness.listings.set("", [{ name: "README.md", kind: "file" }]);
+      await waitFor(() => harness.refreshed.some((paths) => paths.includes("")));
+      assert.ok(harness.refreshed.some((paths) => paths.includes("")), "root change routes to refreshDirs");
+      coordinator.stop();
+    });
+
     it("keeps polling through repeated reconnect failures", async () => {
       const { harness, coordinator } = makeHarness({
         expanded: ["src"],
@@ -487,6 +582,42 @@ describe("live refresh coordinator", () => {
       harness.created[before].emit("error");
       await waitFor(() => harness.listDirCalls.includes("test"), 1500, 5);
       assert.equal(harness.fallback[harness.fallback.length - 1], true, "fallback stays active while adapting");
+      coordinator.stop();
+    });
+  });
+
+  describe("stale expanded-path pruning", () => {
+    it("prunes the store and reconnects the subscription without the missing path", async () => {
+      const values = new Map<string, string>();
+      (globalThis as any).localStorage = {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => { values.set(key, value); },
+        removeItem: (key: string) => { values.delete(key); },
+      };
+      const store = createStore();
+      store.setWorkspace("/ws");
+      store.togglePath("src");
+      store.togglePath("src/gone");
+
+      const urls: string[] = [];
+      const coordinator = createLiveRefreshCoordinator({
+        hint: "/ws",
+        getExpandedPaths: store.getExpandedPaths,
+        subscribeExpandedPaths: store.subscribeExpandedPaths,
+        refreshDirs: () => {},
+        createEventSource: (url) => { urls.push(url); return new FakeEventSource(); },
+      });
+      coordinator.start();
+      assert.equal(urls.length, 1);
+      const before = new URLSearchParams(urls[0].split("?")[1]);
+      assert.deepStrictEqual(JSON.parse(before.get("paths") ?? ""), ["", "src", "src/gone"]);
+
+      // The deleted directory is revealed missing and pruned from the store;
+      // the subscription reconnects without it so the host no longer 404s.
+      store.pruneExpandedPaths(["src/gone"]);
+      assert.equal(urls.length, 2, "pruning reconnects the subscription");
+      const after = new URLSearchParams(urls[1].split("?")[1]);
+      assert.deepStrictEqual(JSON.parse(after.get("paths") ?? ""), ["", "src"]);
       coordinator.stop();
     });
   });

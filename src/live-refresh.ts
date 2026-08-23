@@ -167,6 +167,52 @@ export function affectedDirsForChanges(changes: FileChange[], expandedPaths: str
 }
 
 /**
+ * The directories that must be watched/polled: the workspace root (empty
+ * string) is always included so top-level create/delete/rename events are
+ * delivered and the root listing refreshes, followed by the expanded
+ * directories in store order. The root is deduplicated if it is ever present
+ * in the expanded set.
+ */
+export function watchPathsWithRoot(expandedPaths: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const path of ["", ...expandedPaths]) {
+    if (!seen.has(path)) {
+      seen.add(path);
+      result.push(path);
+    }
+  }
+  return result;
+}
+
+/**
+ * Return the expanded paths that are now stale because their next-level
+ * directory disappeared from the given parent listing (deleted or renamed
+ * away): an expanded path under parentPath whose first segment is absent from
+ * parentEntryNames can no longer exist, so it and all its descendants must be
+ * pruned so future subscriptions never watch a missing directory (which the
+ * host would reject with 404, failing the whole SSE connection). Only the
+ * first segment is checked, so a subtree under a still-present directory is
+ * not pruned by the parent listing alone.
+ */
+export function staleExpandedPathsUnder(
+  parentPath: string,
+  parentEntryNames: string[],
+  expandedPaths: string[]
+): string[] {
+  const prefix = parentPath === "" ? "" : parentPath + "/";
+  const names = new Set(parentEntryNames);
+  const stale: string[] = [];
+  for (const path of expandedPaths) {
+    if (path === "" || path === parentPath) continue;
+    if (!path.startsWith(prefix)) continue;
+    const first = path.slice(prefix.length).split("/")[0];
+    if (first !== "" && !names.has(first)) stale.push(path);
+  }
+  return stale;
+}
+
+/**
  * Compare two path lists as unordered sets.
  */
 export function samePathSet(a: string[], b: string[]): boolean {
@@ -265,10 +311,14 @@ export function createLiveRefreshCoordinator(
   let unsubscribe: (() => void) | null = null;
   let poller: DirectoryPoller | null = null;
 
+  // The root (empty string) is always watched/polled so top-level events are
+  // delivered; expandedPaths is the store's set without the root.
+  const watchedPaths = (): string[] => watchPathsWithRoot(expandedPaths);
+
   const startPoller = (): void => {
     if (!started || !options.listDir || poller !== null) return;
     poller = createDirectoryPoller({
-      getExpandedPaths: () => [...expandedPaths],
+      getExpandedPaths: () => watchedPaths(),
       listDir: options.listDir,
       onChanged: (paths) => {
         if (started) options.refreshDirs(paths);
@@ -327,7 +377,7 @@ export function createLiveRefreshCoordinator(
     if (!started) return;
     epoch += 1;
     const myEpoch = epoch;
-    const url = buildEventsUrl(hint, expandedPaths);
+    const url = buildEventsUrl(hint, watchedPaths());
     let next: LiveEventSource;
     try {
       next = options.createEventSource(url);

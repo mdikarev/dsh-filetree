@@ -250,7 +250,7 @@ describe("fs events", () => {
     });
 
     it("returns 400 for malformed paths JSON", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent("not json")}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent("not json")}`);
       try {
         assert.strictEqual(conn.res.status, 400);
         await conn.bodyDone;
@@ -263,7 +263,7 @@ describe("fs events", () => {
 
     it("returns 400 for absolute and traversal paths", async () => {
       for (const bad of ["/etc", "../outside", "a/../../x", "..\\escape"]) {
-        const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify([bad]))}`);
+        const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([bad]))}`);
         try {
           assert.strictEqual(conn.res.status, 400, `expected 400 for ${bad}`);
         } finally {
@@ -275,7 +275,7 @@ describe("fs events", () => {
     it("returns 403 for a symlink that escapes the workspace", async () => {
       await symlink(outsideDir, join(tempDir, "escape-link"), "dir");
       try {
-        const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["escape-link"]))}`);
+        const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["escape-link"]))}`);
         try {
           assert.strictEqual(conn.res.status, 403);
           await conn.bodyDone;
@@ -290,7 +290,7 @@ describe("fs events", () => {
     });
 
     it("returns 404 for a nonexistent relative path", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["nope"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["nope"]))}`);
       try {
         assert.strictEqual(conn.res.status, 404);
       } finally {
@@ -299,7 +299,7 @@ describe("fs events", () => {
     });
 
     it("returns 400 when a watched path is a file", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir/existing.txt"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir/existing.txt"]))}`);
       try {
         assert.strictEqual(conn.res.status, 400);
       } finally {
@@ -309,7 +309,7 @@ describe("fs events", () => {
 
     it("creates no watchers before all paths validate", async () => {
       assert.strictEqual(activeWatchCount(), 0);
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir", "nope"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir", "nope"]))}`);
       try {
         assert.strictEqual(conn.res.status, 404);
         assert.strictEqual(activeWatchCount(), 0);
@@ -318,8 +318,44 @@ describe("fs events", () => {
       }
     });
 
-    it("falls back to the default root for an invalid hint", async () => {
+    it("rejects an invalid hint without falling back to the default root", async () => {
       const conn = await openSse(handler, `hint=${encodeURIComponent("/nonexistent-hint")}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      try {
+        assert.strictEqual(conn.res.status, 400);
+        assert.strictEqual(activeWatchCount(), 0, "no watchers for a rejected subscription");
+        await conn.bodyDone;
+        const body = JSON.parse(conn.buffer());
+        assert.ok((body as any).error.includes("hint"));
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("requires a hint for the events subscription", async () => {
+      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      try {
+        assert.strictEqual(conn.res.status, 400);
+        assert.strictEqual(activeWatchCount(), 0);
+        await conn.bodyDone;
+        const body = JSON.parse(conn.buffer());
+        assert.ok((body as any).error.includes("hint"));
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("rejects a non-directory hint", async () => {
+      const conn = await openSse(handler, `hint=${encodeURIComponent(join(tempDir, "subdir", "existing.txt"))}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      try {
+        assert.strictEqual(conn.res.status, 400);
+        assert.strictEqual(activeWatchCount(), 0);
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("accepts a valid directory hint as the workspace root", async () => {
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
       try {
         assert.strictEqual(conn.res.status, 200);
         await waitFor(() => activeWatchCount() === 1);
@@ -331,7 +367,7 @@ describe("fs events", () => {
 
   describe("GET /filemanager-fs/events SSE", () => {
     it("streams SSE headers for valid relative paths", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
       try {
         assert.strictEqual(conn.res.status, 200);
         assert.strictEqual(conn.res.headers.get("content-type"), "text/event-stream");
@@ -344,7 +380,7 @@ describe("fs events", () => {
     });
 
     it("emits event: changed with JSON data for file changes", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
       try {
         await waitFor(() => activeWatchCount() === 1);
         await writeFile(join(tempDir, "subdir", "new.txt"), "hello");
@@ -358,7 +394,7 @@ describe("fs events", () => {
     });
 
     it("emits events for root-level changes when watching the root", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
       try {
         await waitFor(() => activeWatchCount() === 1);
         await writeFile(join(tempDir, "root-file.txt"), "x");
@@ -371,7 +407,7 @@ describe("fs events", () => {
     });
 
     it("watches only allowed directories and filters .git from paths", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir", ".git"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir", ".git"]))}`);
       try {
         await waitFor(() => activeWatchCount() === 1);
       } finally {
@@ -380,7 +416,7 @@ describe("fs events", () => {
     });
 
     it("does not deliver events from inside .git", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
       try {
         await waitFor(() => activeWatchCount() === 1);
         // Prove the stream is live with a normal event first.
@@ -399,7 +435,7 @@ describe("fs events", () => {
     });
 
     it("cleans up watchers when the client disconnects", async () => {
-      const conn = await openSse(handler, `paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
       await waitFor(() => activeWatchCount() === 1);
       conn.abort();
       await waitFor(() => activeWatchCount() === 0);

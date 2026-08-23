@@ -32,6 +32,12 @@ export interface FileManagerStore {
   getExpandedPaths(): string[];
   /** Subscribe to expanded-path set changes only; returns an unsubscribe. */
   subscribeExpandedPaths(listener: () => void): () => void;
+  /**
+   * Remove stale expanded paths (e.g. directories deleted or renamed away on
+   * disk). Persists through the existing per-workspace storage and notifies
+   * expanded-path subscribers only when something was actually removed.
+   */
+  pruneExpandedPaths(paths: string[]): void;
   setWorkspace(workspaceHint: string): void;
   setPreviewLayout(layout: PreviewLayout | null): void;
   setPreviewMode(mode: PreviewMode): void;
@@ -192,6 +198,26 @@ export function createStore(): FileManagerStore {
     subscribeExpandedPaths: (listener) => {
       expandedListeners.add(listener);
       return () => expandedListeners.delete(listener);
+    },
+    pruneExpandedPaths: (paths) => {
+      if (paths.length === 0) return;
+      const remove = new Set(paths);
+      const next = new Set<string>();
+      let changed = false;
+      for (const path of state.expandedPaths) {
+        if (remove.has(path)) {
+          changed = true;
+        } else {
+          next.add(path);
+        }
+      }
+      if (!changed) return;
+      state = { ...state, expandedPaths: next };
+      if (state.currentWorkspace) {
+        saveExpandedPaths(state.currentWorkspace, next);
+      }
+      notifyExpanded();
+      listeners.forEach((l) => l());
     },
     setWorkspace: (workspaceHint: string) => {
       if (state.currentWorkspace === workspaceHint) {
