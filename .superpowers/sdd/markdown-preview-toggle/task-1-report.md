@@ -37,3 +37,15 @@
 
 - Browser DOMPurify branch remains untested because the repository has no DOM test implementation; it remains configured with an allowlist and dangerous-scheme policy.
 
+## Round 2 fixes
+
+- Reject decoded backslashes in markdownPath, including encoded Windows separators and encoded absolute paths, before constructing resource URLs.
+- Validate numeric HTML entities before String.fromCodePoint, rejecting out-of-range and surrogate code points without throwing.
+- Added regressions for encoded backslash traversal/absolute paths and malformed numeric entities.
+
+## Round 2 verification
+
+- npm test -- --test-name-pattern=markdown — exit 0; 71 tests passed, 0 failed.
+- npm test — exit 0; 71 tests passed, 0 failed.
+- git diff --check — exit 0; no whitespace errors.
+

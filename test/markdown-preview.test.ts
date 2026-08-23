@@ -52,6 +52,8 @@ test("rejects entity-obfuscated and malformed dangerous URL attributes", () => {
   const { html } = renderMarkdown(source, { filePath: "README.md", workspaceHint: "/workspace" });
   assert.equal(html.toLowerCase().includes("href=\"javascript:"), false);
   assert.equal(html.toLowerCase().includes("href=\"java&#x73;cript:"), false);
+  assert.doesNotThrow(() => renderMarkdown("[bad](java&#x110000;script:alert(1))", { filePath: "README.md", workspaceHint: "/workspace" }));
+  assert.doesNotThrow(() => renderMarkdown("[bad](java&#55296;script:alert(1))", { filePath: "README.md", workspaceHint: "/workspace" }));
 });
 
 test("rejects absolute and traversal markdown paths", () => {
@@ -59,4 +61,6 @@ test("rejects absolute and traversal markdown paths", () => {
   assert.equal(workspaceResourceUrl("/workspace", "../outside/README.md", "img.png"), null);
   assert.equal(workspaceResourceUrl("/workspace", "docs/%2e%2e/README.md", "img.png"), null);
   assert.equal(workspaceResourceUrl("/workspace", "C:/outside/README.md", "img.png"), null);
+  assert.equal(workspaceResourceUrl("/workspace", "docs/%5c%2e%2e%5coutside/README.md", "img.png"), null);
+  assert.equal(workspaceResourceUrl("/workspace", "%2fabsolute/README.md", "img.png"), null);
 });

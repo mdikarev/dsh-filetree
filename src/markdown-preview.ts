@@ -24,7 +24,7 @@ export function workspaceResourceUrl(hint: string, markdownPath: string, resourc
   const normalizedMarkdown = markdownPath.replaceAll("\\", "/");
   let decodedMarkdown: string;
   try { decodedMarkdown = decodeURIComponent(normalizedMarkdown); } catch { return null; }
-  if (!decodedMarkdown || decodedMarkdown.startsWith("/") || decodedMarkdown.startsWith("//") || /^[A-Za-z]:\//.test(decodedMarkdown) || decodedMarkdown.split("/").includes("..")) return null;
+  if (!decodedMarkdown || decodedMarkdown.includes("\\") || decodedMarkdown.startsWith("/") || decodedMarkdown.startsWith("//") || /^[A-Za-z]:\//.test(decodedMarkdown) || decodedMarkdown.split("/").includes("..")) return null;
   const raw = resource.trim();
   if (!raw || isUnsafeUrl(raw) || isExternalUrl(raw)) return null;
   let decoded: string;
@@ -40,7 +40,8 @@ export function workspaceResourceUrl(hint: string, markdownPath: string, resourc
 function decodeHtmlEntities(value: string): string {
   return value.replace(/&amp;/gi, "&").replace(/&(?:#x([0-9a-f]+)|#([0-9]+));?/gi, (_match, hex, decimal) => {
     const code = Number.parseInt(hex ?? decimal, hex ? 16 : 10);
-    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+    const valid = Number.isInteger(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff);
+    return valid ? String.fromCodePoint(code) : _match;
   }).replace(/&(colon|tab|newline);/gi, (_match, name) => ({ colon: ":", tab: "\t", newline: "\n" }[name.toLowerCase()] ?? _match));
 }
 function fallbackSanitize(html: string): string {
