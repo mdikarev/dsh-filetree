@@ -46,3 +46,17 @@ test("constructs only workspace-relative resource URLs", () => {
   assert.equal(workspaceResourceUrl("/workspace", "docs/README.md", "https://example.com/x"), null);
   assert.equal(workspaceResourceUrl("/workspace", "docs/README.md", "javascript:alert(1)"), null);
 });
+
+test("rejects entity-obfuscated and malformed dangerous URL attributes", () => {
+  const source = "[encoded](java&#x73;cript:alert(1))\n\n[malformed](<javascript:alert(1)>)";
+  const { html } = renderMarkdown(source, { filePath: "README.md", workspaceHint: "/workspace" });
+  assert.equal(html.toLowerCase().includes("href=\"javascript:"), false);
+  assert.equal(html.toLowerCase().includes("href=\"java&#x73;cript:"), false);
+});
+
+test("rejects absolute and traversal markdown paths", () => {
+  assert.equal(workspaceResourceUrl("/workspace", "/absolute/README.md", "img.png"), null);
+  assert.equal(workspaceResourceUrl("/workspace", "../outside/README.md", "img.png"), null);
+  assert.equal(workspaceResourceUrl("/workspace", "docs/%2e%2e/README.md", "img.png"), null);
+  assert.equal(workspaceResourceUrl("/workspace", "C:/outside/README.md", "img.png"), null);
+});

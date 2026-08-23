@@ -1,8 +1,8 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 
-export interface MarkdownRenderOptions { filePath: string; workspaceHint: string }
-export interface MarkdownRenderResult { html: string; blockedExternalImages: number }
+interface MarkdownRenderOptions { filePath: string; workspaceHint: string }
+interface MarkdownRenderResult { html: string; blockedExternalImages: number }
 const READ_PATH = "/filemanager-fs/read";
 
 export function isMarkdownFile(name: string): boolean { return name.toLowerCase().endsWith(".md"); }
@@ -21,23 +21,33 @@ function isExternalUrl(value: string): boolean {
 }
 
 export function workspaceResourceUrl(hint: string, markdownPath: string, resource: string): string | null {
+  const normalizedMarkdown = markdownPath.replaceAll("\\", "/");
+  let decodedMarkdown: string;
+  try { decodedMarkdown = decodeURIComponent(normalizedMarkdown); } catch { return null; }
+  if (!decodedMarkdown || decodedMarkdown.startsWith("/") || decodedMarkdown.startsWith("//") || /^[A-Za-z]:\//.test(decodedMarkdown) || decodedMarkdown.split("/").includes("..")) return null;
   const raw = resource.trim();
   if (!raw || isUnsafeUrl(raw) || isExternalUrl(raw)) return null;
   let decoded: string;
   try { decoded = decodeURIComponent(raw); } catch { return null; }
   if (decoded.includes("\\") || decoded.startsWith("/") || decoded.startsWith("//")) return null;
   if (decoded.split("/").includes("..")) return null;
-  const normalizedMarkdown = markdownPath.replaceAll("\\", "/");
-  const directory = normalizedMarkdown.includes("/") ? normalizedMarkdown.slice(0, normalizedMarkdown.lastIndexOf("/")) : "";
+  const directory = decodedMarkdown.includes("/") ? decodedMarkdown.slice(0, decodedMarkdown.lastIndexOf("/")) : "";
   const combined = [directory, decoded].filter(Boolean).join("/");
   if (combined === ".." || combined.startsWith("../") || combined.includes("/../")) return null;
   return READ_PATH + "?" + new URLSearchParams({ hint, path: combined }).toString();
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&amp;/gi, "&").replace(/&(?:#x([0-9a-f]+)|#([0-9]+));?/gi, (_match, hex, decimal) => {
+    const code = Number.parseInt(hex ?? decimal, hex ? 16 : 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+  }).replace(/&(colon|tab|newline);/gi, (_match, name) => ({ colon: ":", tab: "\t", newline: "\n" }[name.toLowerCase()] ?? _match));
+}
 function fallbackSanitize(html: string): string {
   const dangerous = (value: string): boolean => {
     try {
-      const protocol = new URL(value.trim(), "https://workspace.invalid/").protocol;
+      const normalized = decodeHtmlEntities(value).replace(/[\u0000-\u0020]/g, "");
+      const protocol = new URL(normalized, "https://workspace.invalid/").protocol;
       return protocol !== "http:" && protocol !== "https:" && protocol !== "mailto:";
     } catch { return true; }
   };
