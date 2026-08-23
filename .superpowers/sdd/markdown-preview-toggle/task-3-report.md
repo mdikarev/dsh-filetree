@@ -11,3 +11,4 @@
 - Status: fixed local image endpoint handling and anchor URL policy.
 - Tests: focused renderer tests (81 passed via full suite); npm test (81 passed); npm run build; git diff --check HEAD~3..HEAD.
 - Changes: local images are omitted and reported as unavailable; protocol-relative anchors open externally with safe attributes; workspace-relative and unsafe anchors are neutralized.
+- Fix wave 1 commit: b8bcf19e0bad334a3afae313a936c74dc69d09e4
