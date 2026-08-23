@@ -457,6 +457,56 @@ body[data-ds-dark-theme] {
 }
 .fm-preview-render-error { color: var(--dsw-alias-state-error-primary); }
 
+/* Changed-preview confirmation banner (both themes via DSH alias tokens) */
+.fm-preview-changed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--fm-border);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-secondary, var(--fm-surface-muted)) 40%, var(--fm-surface-muted));
+  flex-shrink: 0;
+}
+.fm-preview-changed-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-label, var(--dsw-alias-label-primary));
+}
+.fm-preview-changed-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.fm-preview-changed-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--fm-border);
+  border-radius: 6px;
+  background: var(--fm-surface-elevated);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.fm-preview-changed-btn:hover {
+  background: var(--fm-hover);
+  border-color: var(--fm-border-strong);
+  color: var(--dsw-alias-label-primary);
+}
+.fm-preview-changed-btn--primary {
+  border-color: transparent;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary-invert);
+}
+.fm-preview-changed-btn--primary:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 85%, black);
+}
+
 .fm-modal-pre--highlighted .hljs-comment,
 .fm-modal-pre--highlighted .hljs-quote {
   color: var(--dsw-alias-label-tertiary);

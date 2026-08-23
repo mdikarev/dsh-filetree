@@ -1,6 +1,7 @@
 // src/Tree.tsx
-import { useState, useEffect, useCallback } from "react";
-import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry } from "./api.js";
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
+import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry, type ListResponse } from "./api.js";
+import { staleExpandedPathsUnder } from "./live-refresh.js";
 import type { FileManagerStore } from "./store.js";
 
 interface TreeNodeProps {
@@ -10,6 +11,7 @@ interface TreeNodeProps {
   onError: (msg: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
   store: FileManagerStore;
+  registerReload: (path: string, reload: (() => void) | null) => void;
 }
 
 type FileIconVariant = "code" | "data" | "doc" | "image" | "special" | "default";
@@ -28,7 +30,7 @@ export function getFileIconVariant(name: string): FileIconVariant {
   return "default";
 }
 
-function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodeProps) {
+function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReload }: TreeNodeProps) {
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState({});
@@ -56,6 +58,46 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
     setChildren(null);
   }, [hint]);
 
+  // Apply a fresh listing: update children and, unless the listing was
+  // truncated (a >MAX_ENTRIES directory cannot prove absence), prune expanded
+  // paths whose directory disappeared from this listing so the live
+  // subscription stops watching missing directories.
+  const applyListing = useCallback((res: ListResponse, nodePath: string) => {
+    setChildren(sortEntries(res.entries));
+    if (!res.truncated) {
+      const stale = staleExpandedPathsUnder(
+        nodePath,
+        res.entries.map((entry) => entry.name),
+        store.getExpandedPaths()
+      );
+      if (stale.length > 0) store.pruneExpandedPaths(stale);
+    }
+  }, [store]);
+
+  // Re-fetch this directory's listing in place, keeping the last known
+  // children on failure (used by live refresh invalidation).
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetchList(hint, fullPath)
+      .then((res) => {
+        applyListing(res, fullPath);
+      })
+      .catch((err: any) => {
+        onError(`Failed to refresh ${fullPath}: ${err.message}`);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [hint, fullPath, onError, applyListing]);
+
+  // Register this expanded directory so the coordinator can invalidate it.
+  useEffect(() => {
+    if (isDir && expanded) {
+      registerReload(fullPath, reload);
+      return () => registerReload(fullPath, null);
+    }
+  }, [isDir, expanded, fullPath, reload, registerReload]);
+
   // Автоматически загружаем детей для раскрытых папок при монтировании
   useEffect(() => {
     if (isDir && expanded && children === null) {
@@ -68,7 +110,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
       setLoading(true);
       fetchList(hint, fullPath)
         .then((res) => {
-          setChildren(sortEntries(res.entries));
+          applyListing(res, fullPath);
         })
         .catch((err: any) => {
           onError(`Failed to load ${fullPath}: ${err.message}`);
@@ -78,7 +120,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
           setLoading(false);
         });
     }
-  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError]);
+  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, applyListing]);
 
   const handleToggle = useCallback(async () => {
     if (!isDir) {
@@ -102,7 +144,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
       setLoading(true);
       try {
         const res = await fetchList(hint, fullPath);
-        setChildren(sortEntries(res.entries));
+        applyListing(res, fullPath);
       } catch (err: any) {
         onError(`Failed to load ${fullPath}: ${err.message}`);
         setChildren([]);
@@ -111,7 +153,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
       }
     }
     store.togglePath(fullPath);
-  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, store]);
+  }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, store, applyListing]);
 
   return (
     <div>
@@ -154,6 +196,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store }: TreeNodePro
               path={fullPath}
               onError={onError}
               store={store} onOpenFile={onOpenFile}
+              registerReload={registerReload}
             />
           ))}
         </div>
@@ -170,7 +213,38 @@ interface TreeProps {
   store: FileManagerStore;
 }
 
-export function Tree({ hint, entries, onError, onOpenFile, store }: TreeProps) {
+/**
+ * Imperative handle used by the Panel's live-refresh coordinator to
+ * invalidate specific expanded directories in place.
+ */
+export interface TreeHandle {
+  refreshPaths(paths: string[]): void;
+}
+
+export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entries, onError, onOpenFile, store }, ref) {
+  const reloadersRef = useRef<Map<string, () => void>>(new Map());
+
+  const registerReload = useCallback((path: string, reload: (() => void) | null) => {
+    if (reload === null) {
+      reloadersRef.current.delete(path);
+    } else {
+      reloadersRef.current.set(path, reload);
+    }
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      refreshPaths(paths: string[]): void {
+        for (const path of paths) {
+          const reload = reloadersRef.current.get(path);
+          if (reload) reload();
+        }
+      },
+    }),
+    []
+  );
+
   const sorted = sortEntries(entries);
 
   if (sorted.length === 0) {
@@ -187,8 +261,9 @@ export function Tree({ hint, entries, onError, onOpenFile, store }: TreeProps) {
           path=""
           onError={onError}
           store={store} onOpenFile={onOpenFile}
+          registerReload={registerReload}
         />
       ))}
     </div>
   );
-}
+});

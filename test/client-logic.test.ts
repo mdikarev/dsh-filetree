@@ -1,7 +1,7 @@
 // test/client-logic.test.ts
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { sortEntries, getFileColor, type Entry } from "../src/api.js";
+import { sortEntries, getFileColor, buildEventsUrl, type Entry } from "../src/api.js";
 import { createStore, toggle, close } from "../src/store.js";
 
 describe("sortEntries", () => {
@@ -76,5 +76,126 @@ describe("store", () => {
     store.subscribe(() => called++);
     toggle(store);
     assert.strictEqual(called, 1);
+  });
+});
+
+describe("buildEventsUrl", () => {
+  it("URL-encodes hint and the JSON paths array", () => {
+    const url = buildEventsUrl("/work space", ["src/a b", "test"]);
+    assert.ok(url.startsWith("/filemanager-fs/events?"));
+    const query = url.split("?")[1];
+    assert.ok(!query.includes("+"), "spaces must be encoded as %20, not +");
+    const params = new URLSearchParams(query);
+    assert.strictEqual(params.get("hint"), "/work space");
+    assert.deepStrictEqual(JSON.parse(params.get("paths") ?? ""), ["src/a b", "test"]);
+  });
+
+  it("handles an empty paths array", () => {
+    const url = buildEventsUrl("/ws", []);
+    const params = new URLSearchParams(url.split("?")[1]);
+    assert.deepStrictEqual(JSON.parse(params.get("paths") ?? ""), []);
+  });
+
+  it("encodes plus signs so they are not decoded as spaces", () => {
+    const url = buildEventsUrl("/ws", ["a+b"]);
+    assert.ok(url.includes("a%2Bb"));
+    const params = new URLSearchParams(url.split("?")[1]);
+    assert.deepStrictEqual(JSON.parse(params.get("paths") ?? ""), ["a+b"]);
+  });
+});
+
+describe("store expanded paths", () => {
+  it("exposes expanded paths as a snapshot", () => {
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    store.togglePath("src");
+    store.togglePath("test");
+    assert.deepStrictEqual(store.getExpandedPaths(), ["test"]);
+  });
+
+  it("notifies expanded-path subscribers only when the set changes", () => {
+    const store = createStore();
+    store.setWorkspace("/ws");
+    let notifications = 0;
+    const unsubscribe = store.subscribeExpandedPaths(() => notifications++);
+    store.togglePath("src");
+    assert.strictEqual(notifications, 1);
+    store.togglePath("src");
+    assert.strictEqual(notifications, 2);
+    store.setPreviewMode("rendered");
+    assert.strictEqual(notifications, 2);
+    unsubscribe();
+    store.togglePath("test");
+    assert.strictEqual(notifications, 2);
+  });
+
+  it("persists expanded paths through the existing store persistence", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    assert.deepStrictEqual(JSON.parse(values.get("dsh-filemanager-expanded:/ws") ?? "[]"), ["src"]);
+  });
+});
+
+
+describe("store expanded path pruning", () => {
+  it("prunes stale expanded paths and persists the change", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    store.togglePath("src/gone");
+    store.pruneExpandedPaths(["src/gone"]);
+    assert.deepStrictEqual(store.getExpandedPaths(), ["src"]);
+    assert.deepStrictEqual(JSON.parse(values.get("dsh-filemanager-expanded:/ws") ?? "[]"), ["src"]);
+  });
+
+  it("notifies expanded subscribers only when something was actually pruned", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    let notifications = 0;
+    const unsubscribe = store.subscribeExpandedPaths(() => notifications++);
+    store.pruneExpandedPaths(["nope"]);
+    assert.strictEqual(notifications, 0);
+    store.pruneExpandedPaths(["src"]);
+    assert.strictEqual(notifications, 1);
+    assert.deepStrictEqual(store.getExpandedPaths(), []);
+    unsubscribe();
+  });
+
+  it("is a no-op for an empty prune list", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws");
+    store.togglePath("src");
+    let notifications = 0;
+    store.subscribeExpandedPaths(() => notifications++);
+    store.pruneExpandedPaths([]);
+    assert.strictEqual(notifications, 0);
+    assert.deepStrictEqual(store.getExpandedPaths(), ["src"]);
   });
 });

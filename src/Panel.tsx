@@ -1,11 +1,12 @@
 // src/Panel.tsx
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
-import { fetchRoot, fetchList, sortEntries, type Entry } from "./api.js";
+import { fetchRoot, fetchList, sortEntries, type Entry, type ListResponse } from "./api.js";
 import { fetchFile } from "./preview-api.js";
 import { isMarkdownFile, renderMarkdown } from "./markdown-preview.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
-import { Tree } from "./Tree.js";
+import { Tree, type TreeHandle } from "./Tree.js";
+import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
 import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
@@ -42,12 +43,61 @@ export function getPreviewPresentation(
   }
 }
 
+/**
+ * Pure confirmation state for the changed-preview banner. The coordinator's
+ * change callback delivers debounced per-path changes; these helpers match
+ * them against the current preview identity (the preview path; workspace
+ * identity is already enforced by the coordinator's hint-keyed lifecycle)
+ * and drive the banner's show / dismiss / refresh-clear transitions.
+ */
+export type ChangedPreviewState =
+  | { kind: "idle" }
+  | { kind: "changed"; path: string; changeKind: FileChangeKind }
+  | { kind: "dismissed"; path: string };
+
+export type FileChangeKind = FileChange["kind"];
+
+/**
+ * Reduce a change batch against the current preview path. Changes for other
+ * files never show the banner; a matching event shows it (repeated events for
+ * an already-shown file keep a single banner); a dismissed banner re-appears
+ * only for a new event of the same file; a banner for a different file than
+ * the current preview is stale and is cleared.
+ */
+export function reduceChangedPreview(
+  state: ChangedPreviewState,
+  changes: FileChange[],
+  previewPath: string | null
+): ChangedPreviewState {
+  if (previewPath === null) return { kind: "idle" };
+  if (state.kind !== "idle" && state.path !== previewPath) {
+    state = { kind: "idle" };
+  }
+  const match = changes.find((change) => change.path === previewPath);
+  if (!match) return state;
+  if (state.kind === "changed" && state.path === match.path) return state;
+  return { kind: "changed", path: match.path, changeKind: match.kind };
+}
+
+/** Hide the banner and remember the file until its next change event. */
+export function dismissChangedPreview(state: ChangedPreviewState): ChangedPreviewState {
+  return state.kind === "changed" ? { kind: "dismissed", path: state.path } : state;
+}
+
+/** Clear the banner after a successful refresh. */
+export function clearChangedPreview(): ChangedPreviewState {
+  return { kind: "idle" };
+}
+
 export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
+  const treeRef = useRef<TreeHandle | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [rootName, setRootName] = useState("");
   const [rootPath, setRootPath] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
+  // True while the polling fallback is active (SSE unavailable).
+  const [liveFallback, setLiveFallback] = useState(false);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -59,12 +109,17 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewPos, setPreviewPos] = useState<Point | null>(null);
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+  // Changed-preview confirmation banner state (idle | changed | dismissed).
+  const [changedPreview, setChangedPreview] = useState<ChangedPreviewState>({ kind: "idle" });
 
   const previewWindowRef = useRef<HTMLDivElement | null>(null);
   const previewPosRef = useRef<Point | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
+  // Latest preview path for the coordinator's change callback without
+  // restarting the EventSource whenever a file is opened.
+  const previewPathRef = useRef(previewPath);
 
   // Keep a ref in sync with the position state so drag-start always sees the
   // latest position (also across multiple consecutive drags).
@@ -72,12 +127,34 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     previewPosRef.current = previewPos;
   }, [previewPos]);
 
+  useEffect(() => {
+    previewPathRef.current = previewPath;
+  }, [previewPath]);
+
   // Устанавливаем текущий воркспейс в store при изменении hint
   useEffect(() => {
     if (hint) {
       store.setWorkspace(hint);
     }
   }, [hint, store]);
+
+  const handleError = useCallback((msg: string) => {
+    // Show inline error for individual folder failures
+    console.warn("[filemanager]", msg);
+  }, []);
+
+  // When a root listing no longer contains an expanded top-level directory,
+  // that directory (and its expanded descendants) cannot exist anymore; prune
+  // it from the store so the live subscription stops watching a missing path.
+  const pruneRootStale = useCallback((listRes: ListResponse) => {
+    if (listRes.truncated) return;
+    const stale = staleExpandedPathsUnder(
+      "",
+      listRes.entries.map((entry) => entry.name),
+      store.getExpandedPaths()
+    );
+    if (stale.length > 0) store.pruneExpandedPaths(stale);
+  }, [store]);
 
   const loadRoot = useCallback(async () => {
     if (!hint) {
@@ -95,12 +172,72 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
 
       const listRes = await fetchList(hint, "");
       setEntries(sortEntries(listRes.entries));
+      pruneRootStale(listRes);
       setStatus("ready");
     } catch (err: any) {
       setError(err.message);
       setStatus("error");
     }
-  }, [hint]);
+  }, [hint, pruneRootStale]);
+
+  // Live refresh of the root listing without flashing the loading state;
+  // the last known entries are preserved on failure.
+  const refreshRootEntries = useCallback(async () => {
+    if (!hint) return;
+    try {
+      const rootRes = await fetchRoot(hint);
+      setRootPath(rootRes.root);
+      setRootName(rootRes.name);
+      const listRes = await fetchList(hint, "");
+      setEntries(sortEntries(listRes.entries));
+      pruneRootStale(listRes);
+    } catch (err: any) {
+      handleError(`Failed to refresh root: ${err.message}`);
+    }
+  }, [hint, handleError, pruneRootStale]);
+
+  // Route affected directories from the live-refresh coordinator: the root
+  // listing is owned by the Panel, deeper directories by the Tree handle.
+  const handleRefreshDirs = useCallback((paths: string[]) => {
+    for (const path of paths) {
+      if (path === "") {
+        refreshRootEntries();
+      } else {
+        treeRef.current?.refreshPaths([path]);
+      }
+    }
+  }, [refreshRootEntries]);
+
+  // Coordinator change callback: match the debounced change batch against the
+  // current preview identity. Reading previewPath through a ref keeps the
+  // callback stable, so opening files never restarts the EventSource.
+  const handleFileChanges = useCallback((changes: FileChange[]) => {
+    setChangedPreview((prev) => reduceChangedPreview(prev, changes, previewPathRef.current));
+  }, []);
+
+  // «Обновить»: re-fetch the current hint/path; clear the banner only after a
+  // successful load. On failure the existing preview error display surfaces
+  // the read error and the banner stays for another attempt or dismiss.
+  const handleRefreshChangedPreview = useCallback(async () => {
+    if (!hint || !previewPath) return;
+    setPreviewLoading(true);
+    try {
+      const res = await fetchFile(hint, previewPath);
+      setPreviewContent(res.content);
+      setPreviewTruncated(Boolean(res.truncated));
+      setPreviewError("");
+      setChangedPreview({ kind: "idle" });
+    } catch (err: any) {
+      setPreviewError(err?.message ?? String(err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [hint, previewPath]);
+
+  // «Оставить текущую версию»: hide the banner until the file's next event.
+  const handleDismissChangedPreview = useCallback(() => {
+    setChangedPreview((prev) => dismissChangedPreview(prev));
+  }, []);
 
   const commitLayout = useCallback(() => {
     const el = previewWindowRef.current;
@@ -127,6 +264,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setPreviewError("");
     setPreviewContent("");
     setPreviewTruncated(false);
+    setChangedPreview({ kind: "idle" });
     try {
       const res = await fetchFile(hint, fullPath);
       setPreviewContent(res.content);
@@ -143,6 +281,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setPreviewPos(null);
     setPreviewSize(null);
     dragRef.current = null;
+    setChangedPreview({ kind: "idle" });
   }, []);
 
   const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -228,14 +367,33 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     loadRoot();
   }, [loadRoot]);
 
+  // Live refresh: Panel owns the EventSource lifecycle keyed by hint and the
+  // expanded relative paths. The coordinator is recreated per hint/open so it
+  // always captures the current workspace; stop() closes the source, cancels
+  // the debounce and unsubscribes (no duplicate subscriptions).
+  useEffect(() => {
+    if (!open || !hint) return;
+    const coordinator = createLiveRefreshCoordinator({
+      hint,
+      getExpandedPaths: store.getExpandedPaths,
+      subscribeExpandedPaths: store.subscribeExpandedPaths,
+      refreshDirs: handleRefreshDirs,
+      onFileChange: handleFileChanges,
+      onError: handleError,
+      createEventSource: (url) => new EventSource(url),
+      listDir: async (path: string) => {
+        const res = await fetchList(hint, path);
+        return res.entries;
+      },
+      onFallbackChange: setLiveFallback,
+    });
+    coordinator.start();
+    return () => coordinator.stop();
+  }, [open, hint, store, handleRefreshDirs, handleFileChanges, handleError]);
+
   const handleRefresh = useCallback(() => {
     loadRoot();
   }, [loadRoot]);
-
-  const handleError = useCallback((msg: string) => {
-    // Show inline error for individual folder failures
-    console.warn("[filemanager]", msg);
-  }, []);
 
   const previewStyle: React.CSSProperties = {
     ...(previewPos ? { left: previewPos.x, top: previewPos.y, right: "auto" } : {}),
@@ -286,8 +444,24 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             <div className="fm-empty">Нет воркспейса</div>
           )}
 
+          {liveFallback && (
+            <div
+              role="status"
+              className="fm-live-fallback"
+              style={{
+                padding: "6px 10px",
+                borderBottom: "1px solid var(--fm-border)",
+                color: "var(--dsw-alias-label-secondary)",
+                fontSize: "12px",
+              }}
+            >
+              Автообновление: опрос каталогов (SSE недоступен)
+            </div>
+          )}
+
           {status === "ready" && (
             <Tree
+              ref={treeRef}
               hint={hint}
               entries={entries}
               onError={handleError}
@@ -326,6 +500,27 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               ✕
             </button>
           </div>
+          {changedPreview.kind === "changed" && (
+            <div role="alert" className="fm-preview-changed">
+              <span className="fm-preview-changed-text">Файл изменён на диске</span>
+              <span className="fm-preview-changed-actions">
+                <button
+                  type="button"
+                  className="fm-preview-changed-btn fm-preview-changed-btn--primary"
+                  onClick={handleRefreshChangedPreview}
+                >
+                  Обновить
+                </button>
+                <button
+                  type="button"
+                  className="fm-preview-changed-btn"
+                  onClick={handleDismissChangedPreview}
+                >
+                  Оставить текущую версию
+                </button>
+              </span>
+            </div>
+          )}
           <div className="fm-preview-body">
             {previewLoading && (
               <div className="fm-loading">
