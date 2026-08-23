@@ -6,7 +6,7 @@ import { isMarkdownFile, renderMarkdown } from "./markdown-preview.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
-import { createLiveRefreshCoordinator } from "./live-refresh.js";
+import { createLiveRefreshCoordinator, type FileChange } from "./live-refresh.js";
 import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
@@ -43,6 +43,52 @@ export function getPreviewPresentation(
   }
 }
 
+/**
+ * Pure confirmation state for the changed-preview banner. The coordinator's
+ * change callback delivers debounced per-path changes; these helpers match
+ * them against the current preview identity (the preview path; workspace
+ * identity is already enforced by the coordinator's hint-keyed lifecycle)
+ * and drive the banner's show / dismiss / refresh-clear transitions.
+ */
+export type ChangedPreviewState =
+  | { kind: "idle" }
+  | { kind: "changed"; path: string; changeKind: FileChangeKind }
+  | { kind: "dismissed"; path: string };
+
+export type FileChangeKind = FileChange["kind"];
+
+/**
+ * Reduce a change batch against the current preview path. Changes for other
+ * files never show the banner; a matching event shows it (repeated events for
+ * an already-shown file keep a single banner); a dismissed banner re-appears
+ * only for a new event of the same file; a banner for a different file than
+ * the current preview is stale and is cleared.
+ */
+export function reduceChangedPreview(
+  state: ChangedPreviewState,
+  changes: FileChange[],
+  previewPath: string | null
+): ChangedPreviewState {
+  if (previewPath === null) return { kind: "idle" };
+  if (state.kind !== "idle" && state.path !== previewPath) {
+    state = { kind: "idle" };
+  }
+  const match = changes.find((change) => change.path === previewPath);
+  if (!match) return state;
+  if (state.kind === "changed" && state.path === match.path) return state;
+  return { kind: "changed", path: match.path, changeKind: match.kind };
+}
+
+/** Hide the banner and remember the file until its next change event. */
+export function dismissChangedPreview(state: ChangedPreviewState): ChangedPreviewState {
+  return state.kind === "changed" ? { kind: "dismissed", path: state.path } : state;
+}
+
+/** Clear the banner after a successful refresh. */
+export function clearChangedPreview(): ChangedPreviewState {
+  return { kind: "idle" };
+}
+
 export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const treeRef = useRef<TreeHandle | null>(null);
   const [status, setStatus] = useState<Status>("loading");
@@ -63,18 +109,27 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewPos, setPreviewPos] = useState<Point | null>(null);
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+  // Changed-preview confirmation banner state (idle | changed | dismissed).
+  const [changedPreview, setChangedPreview] = useState<ChangedPreviewState>({ kind: "idle" });
 
   const previewWindowRef = useRef<HTMLDivElement | null>(null);
   const previewPosRef = useRef<Point | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
+  // Latest preview path for the coordinator's change callback without
+  // restarting the EventSource whenever a file is opened.
+  const previewPathRef = useRef(previewPath);
 
   // Keep a ref in sync with the position state so drag-start always sees the
   // latest position (also across multiple consecutive drags).
   useEffect(() => {
     previewPosRef.current = previewPos;
   }, [previewPos]);
+
+  useEffect(() => {
+    previewPathRef.current = previewPath;
+  }, [previewPath]);
 
   // Устанавливаем текущий воркспейс в store при изменении hint
   useEffect(() => {
@@ -138,6 +193,37 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [refreshRootEntries]);
 
+  // Coordinator change callback: match the debounced change batch against the
+  // current preview identity. Reading previewPath through a ref keeps the
+  // callback stable, so opening files never restarts the EventSource.
+  const handleFileChanges = useCallback((changes: FileChange[]) => {
+    setChangedPreview((prev) => reduceChangedPreview(prev, changes, previewPathRef.current));
+  }, []);
+
+  // «Обновить»: re-fetch the current hint/path; clear the banner only after a
+  // successful load. On failure the existing preview error display surfaces
+  // the read error and the banner stays for another attempt or dismiss.
+  const handleRefreshChangedPreview = useCallback(async () => {
+    if (!hint || !previewPath) return;
+    setPreviewLoading(true);
+    try {
+      const res = await fetchFile(hint, previewPath);
+      setPreviewContent(res.content);
+      setPreviewTruncated(Boolean(res.truncated));
+      setPreviewError("");
+      setChangedPreview({ kind: "idle" });
+    } catch (err: any) {
+      setPreviewError(err?.message ?? String(err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [hint, previewPath]);
+
+  // «Оставить текущую версию»: hide the banner until the file's next event.
+  const handleDismissChangedPreview = useCallback(() => {
+    setChangedPreview((prev) => dismissChangedPreview(prev));
+  }, []);
+
   const commitLayout = useCallback(() => {
     const el = previewWindowRef.current;
     if (!el) return;
@@ -163,6 +249,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setPreviewError("");
     setPreviewContent("");
     setPreviewTruncated(false);
+    setChangedPreview({ kind: "idle" });
     try {
       const res = await fetchFile(hint, fullPath);
       setPreviewContent(res.content);
@@ -179,6 +266,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setPreviewPos(null);
     setPreviewSize(null);
     dragRef.current = null;
+    setChangedPreview({ kind: "idle" });
   }, []);
 
   const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -275,6 +363,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       getExpandedPaths: store.getExpandedPaths,
       subscribeExpandedPaths: store.subscribeExpandedPaths,
       refreshDirs: handleRefreshDirs,
+      onFileChange: handleFileChanges,
       onError: handleError,
       createEventSource: (url) => new EventSource(url),
       listDir: async (path: string) => {
@@ -285,7 +374,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     });
     coordinator.start();
     return () => coordinator.stop();
-  }, [open, hint, store, handleRefreshDirs, handleError]);
+  }, [open, hint, store, handleRefreshDirs, handleFileChanges, handleError]);
 
   const handleRefresh = useCallback(() => {
     loadRoot();
@@ -396,6 +485,27 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               ✕
             </button>
           </div>
+          {changedPreview.kind === "changed" && (
+            <div role="alert" className="fm-preview-changed">
+              <span className="fm-preview-changed-text">Файл изменён на диске</span>
+              <span className="fm-preview-changed-actions">
+                <button
+                  type="button"
+                  className="fm-preview-changed-btn fm-preview-changed-btn--primary"
+                  onClick={handleRefreshChangedPreview}
+                >
+                  Обновить
+                </button>
+                <button
+                  type="button"
+                  className="fm-preview-changed-btn"
+                  onClick={handleDismissChangedPreview}
+                >
+                  Оставить текущую версию
+                </button>
+              </span>
+            </div>
+          )}
           <div className="fm-preview-body">
             {previewLoading && (
               <div className="fm-loading">

@@ -207,6 +207,12 @@ export interface LiveRefreshCoordinatorOptions {
   subscribeExpandedPaths(listener: () => void): () => void;
   /** Invoked with the affected directories after a debounced change batch. */
   refreshDirs(paths: string[]): void;
+  /**
+   * Invoked with the debounced, per-path deduplicated change batch, so the
+   * panel can match change events against its current preview identity.
+   * Delivered alongside refreshDirs for the same batch.
+   */
+  onFileChange?(changes: FileChange[]): void;
   onError?(message: string): void;
   /** Injectable EventSource factory (browser EventSource in production). */
   createEventSource(url: string): LiveEventSource;
@@ -282,6 +288,7 @@ export function createLiveRefreshCoordinator(
 
   const debouncer = createDebouncer(debounceMs, (changes) => {
     if (!started) return;
+    options.onFileChange?.(changes);
     const dirs = affectedDirsForChanges(changes, options.getExpandedPaths());
     if (dirs.length > 0) options.refreshDirs(dirs);
   });

@@ -51,6 +51,7 @@ interface Harness {
   created: FakeEventSource[];
   urls: string[];
   refreshed: string[][];
+  fileChanges: FileChange[][];
   expanded: string[];
   subscribeCalls: number;
   unsubscribed: number;
@@ -75,6 +76,7 @@ function makeHarness(
     created: [],
     urls: [],
     refreshed: [],
+    fileChanges: [],
     expanded: overrides.expanded ?? ["src"],
     subscribeCalls: 0,
     unsubscribed: 0,
@@ -95,6 +97,7 @@ function makeHarness(
       };
     },
     refreshDirs: (paths) => harness.refreshed.push(paths),
+    onFileChange: (changes) => harness.fileChanges.push(changes),
     onError: overrides.onError ?? (() => {}),
     listDir: async (path: string) => {
       harness.listDirCalls.push(path);
@@ -485,6 +488,64 @@ describe("live refresh coordinator", () => {
       await waitFor(() => harness.listDirCalls.includes("test"), 1500, 5);
       assert.equal(harness.fallback[harness.fallback.length - 1], true, "fallback stays active while adapting");
       coordinator.stop();
+    });
+  });
+
+  describe("file change callback", () => {
+    it("delivers the debounced change batch alongside refreshDirs", async () => {
+      const { harness, coordinator } = makeHarness({ expanded: ["src"], debounceMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("changed", { data: change("src/a.ts") });
+      await waitFor(() => harness.fileChanges.length === 1);
+      assert.deepStrictEqual(harness.fileChanges[0], [
+        { type: "changed", path: "src/a.ts", kind: "change" },
+      ]);
+      assert.deepStrictEqual(harness.refreshed[0], ["src"]);
+      coordinator.stop();
+    });
+
+    it("deduplicates repeated events per path and keeps the latest kind", async () => {
+      const { harness, coordinator } = makeHarness({ expanded: ["src"], debounceMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("changed", { data: change("src/a.ts") });
+      harness.created[0].emit("changed", { data: change("src/a.ts", "rename") });
+      harness.created[0].emit("changed", { data: change("src/b.ts") });
+      await waitFor(() => harness.fileChanges.length === 1);
+      assert.deepStrictEqual(harness.fileChanges[0], [
+        { type: "changed", path: "src/a.ts", kind: "rename" },
+        { type: "changed", path: "src/b.ts", kind: "change" },
+      ]);
+      coordinator.stop();
+    });
+
+    it("does not deliver malformed or unsafe payloads", async () => {
+      const { harness, coordinator } = makeHarness({ debounceMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("changed", { data: "not json" });
+      harness.created[0].emit("changed", { data: "{}" });
+      harness.created[0].emit("changed", { data: change("/etc/passwd") });
+      await delay(60);
+      assert.deepStrictEqual(harness.fileChanges, []);
+      coordinator.stop();
+    });
+
+    it("drops old-workspace changes from a stale source", async () => {
+      const { harness, coordinator } = makeHarness({ hint: "/ws/a", debounceMs: 20 });
+      coordinator.start();
+      coordinator.setHint("/ws/b");
+      harness.created[0].emit("changed", { data: change("src/old.ts") });
+      await delay(60);
+      assert.deepStrictEqual(harness.fileChanges, []);
+      coordinator.stop();
+    });
+
+    it("stop cancels pending change delivery", async () => {
+      const { harness, coordinator } = makeHarness({ debounceMs: 20 });
+      coordinator.start();
+      coordinator.stop();
+      harness.created[0].emit("changed", { data: change("src/a.ts") });
+      await delay(60);
+      assert.deepStrictEqual(harness.fileChanges, []);
     });
   });
 
