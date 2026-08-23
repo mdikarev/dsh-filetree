@@ -5,3 +5,4 @@ lib/
 .dsh/
 .worktrees/
 .superpowers/
+.DS_Store
