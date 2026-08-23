@@ -2,7 +2,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 
 interface MarkdownRenderOptions { filePath: string; workspaceHint: string }
-interface MarkdownRenderResult { html: string; blockedExternalImages: number }
+interface MarkdownRenderResult { html: string; blockedExternalImages: number; unavailableLocalImages: number }
 const READ_PATH = "/filemanager-fs/read";
 
 export function isMarkdownFile(name: string): boolean { return name.toLowerCase().endsWith(".md"); }
@@ -66,13 +66,23 @@ function sanitize(html: string): string {
 
 export function renderMarkdown(source: string, options: MarkdownRenderOptions): MarkdownRenderResult {
   let blockedExternalImages = 0;
+  let unavailableLocalImages = 0;
   let html = marked.parse(source, { gfm: true, breaks: false, html: false }) as string;
   html = html.replace(/<img\b([^>]*?)\bsrc=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, src, after) => {
-    const safe = !isExternalUrl(src) && !isUnsafeUrl(src) ? workspaceResourceUrl(options.workspaceHint, options.filePath, src) : null;
-    if (!safe) { blockedExternalImages += 1; return ""; }
-    return "<img" + before + "src=" + quote + safe + quote + after + ">";
+    if (isExternalUrl(src) || isUnsafeUrl(src)) { blockedExternalImages += 1; return ""; }
+    unavailableLocalImages += 1;
+    return "";
+  });
+  html = html.replace(/<a\b([^>]*?)\bhref=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, href, after) => {
+    const decoded = decodeHtmlEntities(href);
+    if (isExternalUrl(decoded) || decoded.startsWith("//")) {
+      return "<a" + before + "href=" + quote + href + quote + after + " target=\"_blank\" rel=\"noreferrer noopener\">";
+    }
+    if (workspaceResourceUrl(options.workspaceHint, options.filePath, decoded) || decoded.startsWith("#")) {
+      return decoded.startsWith("#") ? _full : "<a" + before + "href=\"#\" title=\"Workspace link unavailable in preview\"" + after + ">";
+    }
+    return "<a" + before + "href=\"#\"" + after + ">";
   });
   html = sanitize(html);
-  html = html.replace(/<a\b([^>]*?)\bhref=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, href, after) => isExternalUrl(href) ? "<a" + before + "href=" + quote + href + quote + after + " target=\"_blank\" rel=\"noreferrer noopener\">" : _full);
-  return { html, blockedExternalImages };
+  return { html, blockedExternalImages, unavailableLocalImages };
 }

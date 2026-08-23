@@ -19,7 +19,7 @@ interface PanelProps {
 type Status = "loading" | "ready" | "error" | "no-workspace";
 
 export type PreviewPresentation =
-  | { kind: "rendered"; html: string; blockedExternalImages: number }
+  | { kind: "rendered"; html: string; blockedExternalImages: number; unavailableLocalImages: number }
   | { kind: "source" | "highlighted-source"; content: string; html?: string | null; error?: string };
 
 export function getPreviewPresentation(
@@ -343,6 +343,9 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             )}
             {!previewLoading && !previewError && previewPresentation.error && (
               <div className="fm-preview-render-error">Предпросмотр недоступен: {previewPresentation.error}</div>
+            )}
+            {!previewLoading && !previewError && previewPresentation.kind === "rendered" && previewPresentation.unavailableLocalImages > 0 && (
+              <div className="fm-preview-warning" role="status">Локальные изображения недоступны в предпросмотре.</div>
             )}
             {!previewLoading && previewTruncated && (
               <div className="fm-preview-warning" role="status">Файл усечён до 5 МБ; показано не всё содержимое.</div>

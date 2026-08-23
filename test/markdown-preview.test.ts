@@ -31,13 +31,35 @@ test("removes external images and counts them", () => {
   const { html, blockedExternalImages } = renderMarkdown(source, { filePath: "docs/README.md", workspaceHint: "/workspace" });
   assert.equal(blockedExternalImages, 1);
   assert.equal(html.includes("example.com"), false);
-  assert.ok(html.includes("filemanager-fs/read"));
+  assert.equal(html.includes("filemanager-fs/read"), false);
+  assert.equal(html.includes("images/a.png"), false);
+});
+
+test("reports unavailable local images instead of emitting JSON read URLs", () => {
+  const { html, unavailableLocalImages } = renderMarkdown("![local](images/a.png)", { filePath: "docs/README.md", workspaceHint: "/workspace" });
+  assert.equal(unavailableLocalImages, 1);
+  assert.equal(html.includes("filemanager-fs/read"), false);
 });
 
 test("adds safe attributes to external text links", () => {
   const { html } = renderMarkdown("[site](https://example.com)", { filePath: "README.md", workspaceHint: "/workspace" });
   assert.ok(html.includes('target="_blank"'));
   assert.ok(html.includes("noreferrer") && html.includes("noopener"));
+});
+
+test("safely represents protocol-relative and workspace-relative anchors", () => {
+  const { html } = renderMarkdown("[cdn](//evil.example/x)\n\n[docs](guide/next.md)", { filePath: "docs/README.md", workspaceHint: "/workspace" });
+  assert.match(html, /href="\/\/evil\.example\/x"[^>]*target="_blank"/);
+  assert.match(html, /rel="noreferrer noopener"/);
+  assert.equal(html.includes('href="guide/next.md"'), false);
+  assert.match(html, /href="#"/);
+});
+
+test("neutralizes encoded and unsafe anchor schemes", () => {
+  const { html } = renderMarkdown("[bad](java&#x73;cript:alert(1))\n\n[data](data:text/html,evil)", { filePath: "README.md", workspaceHint: "/workspace" });
+  assert.equal(html.toLowerCase().includes("javascript:"), false);
+  assert.equal(html.toLowerCase().includes("data:text"), false);
+  assert.equal(html.includes('href="#"'), true);
 });
 
 test("constructs only workspace-relative resource URLs", () => {
