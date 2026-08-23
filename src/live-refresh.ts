@@ -343,6 +343,22 @@ export function createLiveRefreshCoordinator(
     if (dirs.length > 0) options.refreshDirs(dirs);
   });
 
+  // git-changed events are debounced separately: a single git operation
+  // (commit/stage/checkout) writes several metadata files, so trailing-edge
+  // coalescing emits one refresh of every watched directory (root + expanded),
+  // which re-runs git status and updates the badges.
+  let gitRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleGitRefresh = (): void => {
+    if (!started) return;
+    if (gitRefreshTimer !== null) clearTimeout(gitRefreshTimer);
+    gitRefreshTimer = setTimeout(() => {
+      gitRefreshTimer = null;
+      if (!started) return;
+      options.refreshDirs(watchPathsWithRoot(options.getExpandedPaths()));
+    }, debounceMs);
+  };
+
   const closeSource = (): void => {
     const current = source;
     source = null;
@@ -402,6 +418,11 @@ export function createLiveRefreshCoordinator(
       stopPoller();
     });
 
+    next.addEventListener("git-changed", () => {
+      if (!started || myEpoch !== epoch) return;
+      scheduleGitRefresh();
+    });
+
     next.addEventListener("error", () => {
       if (!started || myEpoch !== epoch) return;
       options.onError?.("live refresh connection lost; will retry");
@@ -439,6 +460,10 @@ export function createLiveRefreshCoordinator(
       started = false;
       epoch += 1;
       clearReconnectTimer();
+      if (gitRefreshTimer !== null) {
+        clearTimeout(gitRefreshTimer);
+        gitRefreshTimer = null;
+      }
       closeSource();
       debouncer.cancel();
       stopPoller();

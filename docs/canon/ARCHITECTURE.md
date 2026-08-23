@@ -10,7 +10,9 @@
 
 ## Building blocks
 - FS API (src/fs-api.ts): обработчик HTTP `createHandler(defaultRoot)` с экшенами `root`, `list`, `read` и новым `events` (SSE).
-- События файловой системы (src/fs-events.ts): SSE-endpoint `GET /filemanager-fs/events` — парсинг и валидация `paths`, жизненный цикл `fs.watch` (watcher-ы создаются только после валидации всех путей и освобождаются при disconnect/ошибке соединения), нормализация событий в `{ type: "changed", path, kind }` и фильтрация `.git`.
+- События файловой системы (src/fs-events.ts): SSE-endpoint `GET /filemanager-fs/events` — парсинг и валидация `paths`, жизненный цикл `fs.watch` (watcher-ы создаются только после валидации всех путей и освобождаются при disconnect/ошибке соединения),
+   нормализация событий в `{ type: "changed", path, kind }` с фильтрацией содержимого `.git`; отдельные watcher-ы на git-метаданные (каталог `.git/` и `.git/refs/heads`, если есть)
+   эмитят событие `{ type: "git-changed" }` при изменении `index`/`HEAD`/refs.
 - API клиент (src/api.ts): функции `fetchRoot`, `fetchList`, `fetchFile` и новая `buildEventsUrl(hint, paths)` — URL-encoding hint и JSON-массива `paths`.
 - Координация живого обновления (src/live-refresh.ts): чистые хелперы `parentDirectory`, `affectedExpandedDirectories`, trailing-edge debounce (250 мс) с объединением по пути, безопасный `parseSseChange` и `createLiveRefreshCoordinator` (один SSE-транспорт, reconnect с backoff, targeted invalidation, polling fallback).
 - SSE-клиент (src/sse-client.ts): fetch-based SSE-транспорт для `events`-эндпоинта — нативный EventSource не может отправить обязательный security-header `x-dsh-filemanager: 1` и потому всегда получал 403, поэтому клиент стримит тот же фрейминг через `fetch` и зеркалирует минимальную поверхность EventSource (`open`, именованные события, `error`, `close()` через AbortController); reconnect и backoff остаются у координатора.
@@ -44,10 +46,10 @@
 2. Сервер требует header `x-dsh-filemanager: 1` и строгий hint: `hint` обязателен и должен быть валидным каталогом, иначе подписка отклоняется (400) — fallback на default root для events отсутствует (в отличие от root/list/read). Затем валидируется каждый путь (`realpath` + `isInside` + каталог, не `.git`) до создания любого watcher.
    Любой некорректный путь отклоняет всю подписку (400/403/404) без единого watcher-а — fallback на подмножество валидных путей не выполняется.
 3. Серверный `fs.watch` регистрируется на каждый провалидированный каталог. Сырые события нормализуются в `{ "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }` и отправляются блоками `event: changed` + `data: <json>`;
-   события за пределами workspace и из `.git` не доставляются. Все watcher-ы соединения освобождаются при закрытии/ошибке SSE-ответа (disconnect).
+   события за пределами workspace и содержимое `.git` как `changed` не доставляются. Дополнительно сервер наблюдает git-метаданные корня (каталог `.git/` и `.git/refs/heads`, если они есть) и при изменении `index`/`HEAD`/refs отправляет блок `event: git-changed` + `data: { "type": "git-changed" }`. Все watcher-ы соединения (рабочие каталоги и git-метаданные) освобождаются при закрытии/ошибке SSE-ответа (disconnect).
 4. Координатор клиента держит ровно один SSE-транспорт (fetch-based клиент из `src/sse-client.ts`, зеркалирующий поверхность EventSource; нативный EventSource не может отправить обязательный header `x-dsh-filemanager: 1`), ключевой по hint и набору раскрытых путей; смена workspace или набора путей закрывает старое соединение до создания нового; события из устаревшего (старого workspace / перезапущенного) источника отбрасываются.
 5. События попадают в trailing-edge debounce 250 мс с объединением по пути (повторное событие заменяет kind). После окна батч направляется в targeted invalidation: `fetchList` повторно вызывается только для затронутых раскрытых каталогов (для root-уровневых изменений — корень);
-   изменения внутри закрытых каталогов фоновых запросов не вызывают. Раскрытие узлов, состояние предпросмотра и режим Markdown сохраняются.
+   изменения внутри закрытых каталогов фоновых запросов не вызывают. Раскрытие узлов, состояние предпросмотра и режим Markdown сохраняются. Событие `git-changed` (git-операции: commit/stage/checkout) не попадает в файловый debounce: клиент с тем же trailing-edge окном 250 мс перечитывает ВСЕ наблюдаемые каталоги (корень + раскрытые), чтобы обновить git-бейджи; confirmation banner для preview при этом не триггерится.
 6. Если текущий preview-файл затронут событием, содержимое не перезагружается молча: в панели показывается confirmation banner «Файл изменён на диске» с кнопками «Обновить» и «Оставить текущую версию».
    «Обновить» повторяет `fetchFile` и скрывает баннер только после успешной загрузки; «Оставить текущую версию» скрывает баннер до следующего события для этого файла. Для Markdown сохраняется выбранный режим «Исходник»/«Предпросмотр».
 7. При ошибке SSE-соединения (событие `error`) клиент закрывает источник, переподключается с экспоненциальным backoff (база 500 мс, кап 10 с) и включает polling fallback: перечисление раскрытых каталогов и корня раз в 5 секунд, сравнение снапшотов (имена/тип/размер/mtime) и инвалидация только изменившихся каталогов через тот же `refreshDirs`;
@@ -90,7 +92,9 @@ Query:
 
 Header: `x-dsh-filemanager: 1` обязателен.
 
-Response (200): `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`; каждый normalized event — блок `event: changed` + `data: { "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }`. Путь внутри `.git` или за пределами workspace не отправляется; при disconnect все watcher-ы соединения освобождаются.
+Response (200): `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`; каждый normalized event — блок `event: changed` + `data: { "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }`.
+Путь внутри `.git` или за пределами workspace не отправляется. При изменении git-метаданных (`index`/`HEAD`/refs) отправляется блок `event: git-changed` + `data: { "type": "git-changed" }` — клиент перечитывает наблюдаемые каталоги для обновления git-бейджей.
+При disconnect все watcher-ы соединения (рабочие каталоги и git-метаданные) освобождаются.
 
 Ошибки:
 - 403 `{ error: "missing x-dsh-filemanager header" }`
@@ -126,7 +130,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Заголовок безопасности: `x-dsh-filemanager: 1` обязателен для всех запросов, включая `events`
 - Ограничение чтения: 5 МБ; `truncated: true` если файл больше
 - Кодировка: UTF-8; при некорректной кодировке — ошибка
-- Живое обновление: debounce 250 мс; polling fallback — раз в 5 секунд; reconnect backoff — 500 мс с удвоением, кап 10 с
+- Живое обновление: debounce 250 мс; polling fallback — раз в 5 секунд; reconnect backoff — 500 мс с удвоением, кап 10 с; git-бейджи: событие `git-changed` при изменении git-метаданных (`index`/`HEAD`/refs), клиент перечитывает наблюдаемые каталоги
 - Watcher-ы освобождаются при disconnect/ошибке SSE-соединения (активных watcher-ов после закрытия — 0)
 
 ## Failure modes / error handling
@@ -142,6 +146,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Некорректный `paths`-JSON, абсолютный/traversal/backslash путь, путь за пределами workspace, несуществующий путь или файл вместо каталога — подписка `events` отклоняется (400/403/404), watcher-ы не создаются (нет fallback на подмножество путей);
   клиент показывает статус недоступности автообновления и переходит к polling fallback
 - Отсутствует или неверный `x-dsh-filemanager` — 403, SSE не создаётся
+- В корне нет `.git` или `.git` является файлом (linked worktree/submodule) — git-метаданные не наблюдаются, событие `git-changed` не отправляется; это не ошибка соединения, обычные `changed`-события продолжают работать
 - Каталог удалён во время watcher operation — событие обрабатывается без падения; узел исчезает после invalidation родителя, его reloader вычищается из реестра инвалидации
 - Ошибка watcher-а или SSE — клиент закрывает источник, переподключается с backoff и включает polling раскрытых каталогов раз в 5 секунд; успешный reconnect останавливает polling
 - Смена workspace — старые SSE, watcher-ы, debounce и polling останавливаются; создаётся контур нового workspace
@@ -160,6 +165,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Раскрытый каталог отражает создание/удаление/rename на диске после debounce (~250 мс); закрытые каталоги не опрашиваются и не инвалидируются
 - Изменённый на диске preview-файл не перезагружается молча: показывается confirmation banner с «Обновить»/«Оставить текущую версию»; «Обновить» срабатывает только после успешной загрузки
 - Соединение восстанавливается после сбоя (reconnect с backoff), polling fallback работает и останавливается при восстановлении SSE, ручной ↻ продолжает работать
+- Git-бейджи обновляются автоматически после git-операций (commit/stage/checkout): сервер шлёт `git-changed` при изменении `index`/`HEAD`/refs, клиент перечитывает раскрытые каталоги; для воркспейса без `.git` событие просто не отправляется
 - При disconnect/закрытии панели watcher-ы, SSE-соединение и таймеры освобождаются (дубликаты подписок не возникают)
 
 ## Related canon

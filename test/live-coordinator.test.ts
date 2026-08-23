@@ -693,4 +693,47 @@ describe("live refresh coordinator", () => {
       coordinator.stop();
     });
   });
+
+  describe("git-changed handling", () => {
+    it("refreshes all watched directories on git-changed (debounced)", async () => {
+      const { harness, coordinator } = makeHarness({ expanded: ["src", "test"], debounceMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("git-changed");
+      await waitFor(() => harness.refreshed.length === 1);
+      assert.deepStrictEqual(harness.refreshed[0], ["", "src", "test"]);
+      coordinator.stop();
+    });
+
+    it("coalesces rapid git-changed events into a single refresh", async () => {
+      const { harness, coordinator } = makeHarness({ expanded: ["src"], debounceMs: 50 });
+      coordinator.start();
+      harness.created[0].emit("git-changed");
+      harness.created[0].emit("git-changed");
+      harness.created[0].emit("git-changed");
+      await delay(200);
+      assert.strictEqual(harness.refreshed.length, 1);
+      assert.deepStrictEqual(harness.refreshed[0], ["", "src"]);
+      coordinator.stop();
+    });
+
+    it("does not trigger file-change callbacks on git-changed", async () => {
+      const { harness, coordinator } = makeHarness({ debounceMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("git-changed");
+      await waitFor(() => harness.refreshed.length === 1);
+      assert.deepStrictEqual(harness.fileChanges, []);
+      coordinator.stop();
+    });
+
+    it("ignores git-changed from a stale source and after stop", async () => {
+      const { harness, coordinator } = makeHarness({ debounceMs: 20 });
+      coordinator.start();
+      coordinator.setHint("/ws/b");
+      harness.created[0].emit("git-changed");
+      await delay(80);
+      assert.deepStrictEqual(harness.refreshed, []);
+      coordinator.stop();
+    });
+  });
+
 });

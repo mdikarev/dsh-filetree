@@ -19,9 +19,14 @@ const HIDDEN_SYSTEM = new Set([".git"]);
  * and removes it when the connection closes or errors.
  */
 const activeWatchers = new Set<FSWatcher>();
+const activeGitWatchers = new Set<FSWatcher>();
 
 export function activeWatchCount(): number {
   return activeWatchers.size;
+}
+
+export function activeGitWatchCount(): number {
+  return activeGitWatchers.size;
 }
 
 /**
@@ -164,6 +169,7 @@ export function normalizeFsEvent(
 export function createEventsHandler(defaultRoot: string) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const watchers = new Set<FSWatcher>();
+    const gitWatchers = new Set<FSWatcher>();
     let disposed = false;
 
     const dispose = (): void => {
@@ -178,6 +184,15 @@ export function createEventsHandler(defaultRoot: string) {
         activeWatchers.delete(watcher);
       }
       watchers.clear();
+      for (const watcher of gitWatchers) {
+        try {
+          watcher.close();
+        } catch {
+          // already closed
+        }
+        activeGitWatchers.delete(watcher);
+      }
+      gitWatchers.clear();
     };
 
     const cleanupAndEnd = (): void => {
@@ -188,6 +203,64 @@ export function createEventsHandler(defaultRoot: string) {
         } catch {
           // response already gone
         }
+      }
+    };
+
+    /**
+     * Watch git metadata so git operations (commit/stage/checkout) notify the
+     * client: the workspace fs.watch intentionally ignores .git content, so
+     * badges would otherwise stay stale until a manual refresh. Watches the
+     * .git directory (index/HEAD/packed-refs and friends) and .git/refs/heads
+     * (branch ref updates), when they exist. Git metadata can be restructured
+     * by git itself (gc, pack-refs): a lost watcher is tolerated, not fatal.
+     */
+    const watchGitMetadata = async (root: string): Promise<void> => {
+      const gitDir = join(root, ".git");
+      let gitStat;
+      try {
+        gitStat = await stat(gitDir);
+      } catch {
+        return; // not a git repository
+      }
+      if (!gitStat.isDirectory()) return; // linked worktree / submodule: .git is a file
+      if (disposed) return; // connection closed while we probed .git
+
+      const emitGitChanged = (): void => {
+        if (disposed) return;
+        try {
+          res.write('event: git-changed\ndata: ' + JSON.stringify({ type: "git-changed" }) + '\n\n');
+        } catch {
+          // connection closing; close/error handlers own cleanup
+        }
+      };
+
+      for (const rel of [".", join("refs", "heads")]) {
+        const target = join(gitDir, rel);
+        let st;
+        try {
+          st = await stat(target);
+        } catch {
+          continue;
+        }
+        if (!st.isDirectory()) continue;
+        if (disposed) return; // connection closed while we probed this target
+        let watcher: FSWatcher;
+        try {
+          watcher = watch(target, () => emitGitChanged());
+        } catch {
+          continue;
+        }
+        watcher.on("error", () => {
+          gitWatchers.delete(watcher);
+          activeGitWatchers.delete(watcher);
+          try {
+            watcher.close();
+          } catch {
+            // already closed
+          }
+        });
+        gitWatchers.add(watcher);
+        activeGitWatchers.add(watcher);
       }
     };
 
@@ -245,6 +318,14 @@ export function createEventsHandler(defaultRoot: string) {
       });
       res.flushHeaders();
 
+      // Register cleanup before creating any watcher: the client can abort the
+      // connection at any point (even between two awaits), and the close event
+      // fires only once, so the listener must already be attached when the
+      // first watcher exists. cleanupAndEnd is idempotent (dispose guards on a
+      // disposed flag), so early registration is safe.
+      res.on("close", cleanupAndEnd);
+      res.on("error", cleanupAndEnd);
+
       for (const target of uniqueTargets) {
         let watcher: FSWatcher;
         try {
@@ -268,8 +349,7 @@ export function createEventsHandler(defaultRoot: string) {
         activeWatchers.add(watcher);
       }
 
-      res.on("close", cleanupAndEnd);
-      res.on("error", cleanupAndEnd);
+      await watchGitMetadata(root);
     } catch (err: any) {
       dispose();
       if (!res.headersSent) {

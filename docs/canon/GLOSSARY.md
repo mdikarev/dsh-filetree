@@ -16,6 +16,9 @@
 ### Git-бейдж
 Пилюля на строке дерева со статусом файла/папки: `M` modified, `A` added, `D` deleted, `?` untracked, `I` ignored; для папок — `•`.
 
+### git-changed (SSE-событие)
+Событие, которое сервер шлёт при изменении git-метаданных воркспейса (`.git/index`, `.git/HEAD`, refs): клиент перечитывает наблюдаемые каталоги, чтобы обновить git-бейджи без ручного ↻.
+
 ## Naming conventions
 <!-- Record project-wide naming rules. -->
 

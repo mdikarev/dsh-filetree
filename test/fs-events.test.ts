@@ -9,6 +9,7 @@ import {
   normalizeFsEvent,
   createEventsHandler,
   activeWatchCount,
+  activeGitWatchCount,
 } from "../src/fs-events.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -54,6 +55,14 @@ function changedEvents(text: string): ChangedEvent[] {
     }
   }
   return out;
+}
+
+function gitChangedCount(text: string): number {
+  let count = 0;
+  for (const block of text.split("\n\n")) {
+    if (block.split("\n").some((l) => l.trim() === "event: git-changed")) count += 1;
+  }
+  return count;
 }
 
 type SseConnection = {
@@ -515,4 +524,80 @@ describe("fs events", () => {
       await conn.close();
     });
   });
+
+  describe("git-changed events", () => {
+    it("emits git-changed when .git/index changes", async () => {
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      try {
+        await waitFor(() => activeGitWatchCount() >= 1, { message: "git metadata watcher created" });
+        await writeFile(join(tempDir, ".git", "index"), "staged");
+        await waitFor(() => gitChangedCount(conn.buffer()) >= 1, { message: "git-changed after index write" });
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("emits git-changed when a branch ref changes", async () => {
+      await mkdir(join(tempDir, ".git", "refs", "heads"), { recursive: true });
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      try {
+        await waitFor(() => activeGitWatchCount() >= 2, { message: "git metadata watchers created" });
+        await writeFile(join(tempDir, ".git", "refs", "heads", "main"), "abc123\n");
+        await waitFor(() => gitChangedCount(conn.buffer()) >= 1, { message: "git-changed after ref write" });
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("does not emit git-changed for workspace content changes", async () => {
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["", "subdir"]))}`);
+      try {
+        await waitFor(() => activeWatchCount() === 2, { message: "workspace watchers created" });
+        await expectChangeEvent(
+          conn,
+          async (attempt) => {
+            const name = attempt === 1 ? "plain.txt" : `plain-${attempt}.txt`;
+            await writeFile(join(tempDir, "subdir", name), "hello");
+            return `subdir/${name}`;
+          },
+          "workspace change event"
+        );
+        assert.ok(gitChangedCount(conn.buffer()) === 0, "no git-changed for workspace content");
+      } finally {
+        await conn.close();
+      }
+    });
+
+    it("emits no git-changed and creates no git watchers without a .git directory", async () => {
+      const plain = await mkdtemp(join(tmpdir(), "fs-events-plain-"));
+      const plainHandler = createEventsHandler(plain);
+      const conn = await openSse(plainHandler, `hint=${encodeURIComponent(plain)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      try {
+        await waitFor(() => activeWatchCount() === 1, { message: "root watcher created" });
+        assert.strictEqual(activeGitWatchCount(), 0, "no git watchers without .git");
+        await expectChangeEvent(
+          conn,
+          async (attempt) => {
+            const name = attempt === 1 ? "a.txt" : `a-${attempt}.txt`;
+            await writeFile(join(plain, name), "x");
+            return name;
+          },
+          "workspace change without git"
+        );
+        assert.ok(gitChangedCount(conn.buffer()) === 0, "no git-changed without .git");
+      } finally {
+        await conn.close();
+        await rm(plain, { recursive: true, force: true });
+      }
+    });
+
+    it("cleans up git metadata watchers on disconnect", async () => {
+      const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
+      await waitFor(() => activeGitWatchCount() >= 1, { message: "git watchers created" });
+      conn.abort();
+      await waitFor(() => activeGitWatchCount() === 0, { message: "git watchers drained" });
+      await conn.close();
+    });
+  });
+
 });
