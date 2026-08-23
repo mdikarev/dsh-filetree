@@ -25,6 +25,6 @@
 
 ---
 
-Status: draft
+Status: absorbed
 Depends: текстовый предпросмотр (endpoint read) реализован
 Unblocks: чтение документации и README репозитория без внешнего просмотрщика
