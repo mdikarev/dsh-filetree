@@ -50,6 +50,8 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [rootPath, setRootPath] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
+  // True while the polling fallback is active (SSE unavailable).
+  const [liveFallback, setLiveFallback] = useState(false);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -275,6 +277,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       refreshDirs: handleRefreshDirs,
       onError: handleError,
       createEventSource: (url) => new EventSource(url),
+      listDir: async (path: string) => {
+        const res = await fetchList(hint, path);
+        return res.entries;
+      },
+      onFallbackChange: setLiveFallback,
     });
     coordinator.start();
     return () => coordinator.stop();
@@ -331,6 +338,21 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
 
           {status === "no-workspace" && (
             <div className="fm-empty">Нет воркспейса</div>
+          )}
+
+          {liveFallback && (
+            <div
+              role="status"
+              className="fm-live-fallback"
+              style={{
+                padding: "6px 10px",
+                borderBottom: "1px solid var(--fm-border)",
+                color: "var(--dsw-alias-label-secondary)",
+                fontSize: "12px",
+              }}
+            >
+              Автообновление: опрос каталогов (SSE недоступен)
+            </div>
           )}
 
           {status === "ready" && (

@@ -1,5 +1,6 @@
 // src/live-refresh.ts
 import { buildEventsUrl } from "./api.js";
+import { createDirectoryPoller, POLL_INTERVAL_MS, type DirectoryPoller, type PolledEntry } from "./live-polling.js";
 
 // Pure client-side coordination helpers for live tree refresh: parent/affected
 // directory mapping, SSE payload parsing, and change debouncing. No React or
@@ -209,6 +210,15 @@ export interface LiveRefreshCoordinatorOptions {
   onError?(message: string): void;
   /** Injectable EventSource factory (browser EventSource in production). */
   createEventSource(url: string): LiveEventSource;
+  /**
+   * Fetch one relative expanded directory's raw entries; when provided the
+   * coordinator can activate the polling fallback when SSE fails.
+   */
+  listDir?(path: string): Promise<PolledEntry[]>;
+  /** Polling cadence for the fallback; defaults to POLL_INTERVAL_MS (5000). */
+  pollIntervalMs?: number;
+  /** Invoked when the polling fallback activates (true) or SSE recovers (false). */
+  onFallbackChange?(active: boolean): void;
   debounceMs?: number;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
@@ -227,7 +237,10 @@ export interface LiveRefreshCoordinator {
  * drops events from stale (old workspace / restarted) sources; debounces
  * batches with a trailing window; invalidates only affected expanded
  * directories via refreshDirs; and reconnects with exponential backoff after
- * an error (polling fallback is Task 4, out of scope here).
+ * an error. When listDir is provided, an EventSource error (initial failure
+ * or repeated reconnect failure) activates the polling fallback over the
+ * current expanded directories; a successful reconnect stops it, so SSE keeps
+ * priority whenever it is healthy.
  */
 export function createLiveRefreshCoordinator(
   options: LiveRefreshCoordinatorOptions
@@ -244,6 +257,28 @@ export function createLiveRefreshCoordinator(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let unsubscribe: (() => void) | null = null;
+  let poller: DirectoryPoller | null = null;
+
+  const startPoller = (): void => {
+    if (!started || !options.listDir || poller !== null) return;
+    poller = createDirectoryPoller({
+      getExpandedPaths: () => [...expandedPaths],
+      listDir: options.listDir,
+      onChanged: (paths) => {
+        if (started) options.refreshDirs(paths);
+      },
+      pollIntervalMs: options.pollIntervalMs ?? POLL_INTERVAL_MS,
+    });
+    poller.start();
+    options.onFallbackChange?.(true);
+  };
+
+  const stopPoller = (): void => {
+    if (poller === null) return;
+    poller.stop();
+    poller = null;
+    options.onFallbackChange?.(false);
+  };
 
   const debouncer = createDebouncer(debounceMs, (changes) => {
     if (!started) return;
@@ -292,6 +327,7 @@ export function createLiveRefreshCoordinator(
     } catch (err) {
       options.onError?.(`live refresh: ${err instanceof Error ? err.message : String(err)}`);
       scheduleReconnect();
+      startPoller();
       return;
     }
     source = next;
@@ -306,6 +342,7 @@ export function createLiveRefreshCoordinator(
     next.addEventListener("open", () => {
       if (!started || myEpoch !== epoch) return;
       reconnectAttempt = 0;
+      stopPoller();
     });
 
     next.addEventListener("error", () => {
@@ -313,6 +350,7 @@ export function createLiveRefreshCoordinator(
       options.onError?.("live refresh connection lost; will retry");
       closeSource();
       scheduleReconnect();
+      startPoller();
     });
   };
 
@@ -346,6 +384,7 @@ export function createLiveRefreshCoordinator(
       clearReconnectTimer();
       closeSource();
       debouncer.cancel();
+      stopPoller();
       if (unsubscribe) {
         unsubscribe();
         unsubscribe = null;
@@ -354,6 +393,7 @@ export function createLiveRefreshCoordinator(
     setHint(nextHint: string): void {
       if (nextHint === hint) return;
       hint = nextHint;
+      stopPoller();
       reconnect();
     },
   };

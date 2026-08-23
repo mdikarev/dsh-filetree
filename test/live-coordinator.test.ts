@@ -16,6 +16,7 @@ import {
   type LiveEventSource,
 } from "../src/live-refresh.js";
 import { buildEventsUrl } from "../src/api.js";
+import type { PolledEntry } from "../src/live-polling.js";
 
 class FakeEventSource implements LiveEventSource {
   handlers = new Map<string, Array<(event: any) => void>>();
@@ -54,6 +55,9 @@ interface Harness {
   subscribeCalls: number;
   unsubscribed: number;
   storeListener: (() => void) | null;
+  listDirCalls: string[];
+  listings: Map<string, PolledEntry[]>;
+  fallback: boolean[];
 }
 
 function makeHarness(
@@ -63,6 +67,7 @@ function makeHarness(
     debounceMs: number;
     reconnectBaseMs: number;
     reconnectMaxMs: number;
+    pollIntervalMs: number;
     onError: (message: string) => void;
   }> = {}
 ): { harness: Harness; coordinator: ReturnType<typeof createLiveRefreshCoordinator> } {
@@ -74,6 +79,9 @@ function makeHarness(
     subscribeCalls: 0,
     unsubscribed: 0,
     storeListener: null,
+    listDirCalls: [],
+    listings: new Map(),
+    fallback: [],
   };
   const coordinator = createLiveRefreshCoordinator({
     hint: overrides.hint ?? "/workspace",
@@ -88,6 +96,11 @@ function makeHarness(
     },
     refreshDirs: (paths) => harness.refreshed.push(paths),
     onError: overrides.onError ?? (() => {}),
+    listDir: async (path: string) => {
+      harness.listDirCalls.push(path);
+      return [...(harness.listings.get(path) ?? [])];
+    },
+    onFallbackChange: (active: boolean) => harness.fallback.push(active),
     createEventSource: (url) => {
       const source = new FakeEventSource();
       harness.created.push(source);
@@ -97,6 +110,7 @@ function makeHarness(
     ...(overrides.debounceMs !== undefined ? { debounceMs: overrides.debounceMs } : {}),
     ...(overrides.reconnectBaseMs !== undefined ? { reconnectBaseMs: overrides.reconnectBaseMs } : {}),
     ...(overrides.reconnectMaxMs !== undefined ? { reconnectMaxMs: overrides.reconnectMaxMs } : {}),
+    ...(overrides.pollIntervalMs !== undefined ? { pollIntervalMs: overrides.pollIntervalMs } : {}),
   });
   return { harness, coordinator };
 }
@@ -299,6 +313,7 @@ describe("live refresh coordinator", () => {
       // At most one source alive at a time.
       const open = harness.created.filter((s) => !s.closed);
       assert.equal(open.length, 1);
+      coordinator.stop();
     });
 
     it("does not stack reconnect timers when the error fires again", async () => {
@@ -315,6 +330,161 @@ describe("live refresh coordinator", () => {
       await waitFor(() => harness.created.length === 2);
       await delay(60);
       assert.equal(harness.created.length, 2);
+      coordinator.stop();
+    });
+  });
+
+  describe("polling fallback", () => {
+    it("starts polling on the initial EventSource error and stops on successful reconnect", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      assert.deepStrictEqual(harness.fallback, []);
+      assert.deepStrictEqual(harness.listDirCalls, [], "no polling while SSE is healthy");
+
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+      assert.deepStrictEqual(harness.fallback, [true], "fallback status on initial error");
+
+      // Successful reconnect stops the fallback and clears the status.
+      await waitFor(() => harness.created.length === 2);
+      harness.created[1].emit("open");
+      assert.deepStrictEqual(harness.fallback, [true, false]);
+      const calls = harness.listDirCalls.length;
+      await delay(80);
+      assert.equal(harness.listDirCalls.length, calls, "polling must stop after SSE recovery");
+      coordinator.stop();
+    });
+
+    it("invalidates changed expanded dirs via the same refreshDirs callback", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      harness.listings.set("src", [{ name: "a.ts", kind: "file" }]);
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.includes("src"));
+      await delay(25);
+      assert.deepStrictEqual(harness.refreshed, [], "baseline poll must not invalidate");
+
+      harness.listings.set("src", [{ name: "a.ts", kind: "file" }, { name: "b.ts", kind: "file" }]);
+      await waitFor(() => harness.refreshed.length === 1);
+      assert.deepStrictEqual(harness.refreshed[0], ["src"], "poll uses the targeted invalidation callback");
+      coordinator.stop();
+    });
+
+    it("keeps polling through repeated reconnect failures", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+      await waitFor(() => harness.created.length === 2);
+      harness.created[1].emit("error");
+      await waitFor(() => harness.created.length === 3);
+      const calls = harness.listDirCalls.length;
+      await waitFor(() => harness.listDirCalls.length > calls, 1500, 5);
+      assert.deepStrictEqual(harness.fallback, [true], "fallback stays active through failures");
+      coordinator.stop();
+    });
+
+    it("does not poll while SSE is healthy and resumes when it drops", async () => {
+      const { harness, coordinator } = makeHarness({ expanded: ["src"], pollIntervalMs: 20 });
+      coordinator.start();
+      harness.created[0].emit("open");
+      await delay(80);
+      assert.deepStrictEqual(harness.listDirCalls, []);
+      assert.deepStrictEqual(harness.fallback, []);
+
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+      assert.deepStrictEqual(harness.fallback, [true]);
+      coordinator.stop();
+    });
+
+    it("stop() cancels polling (panel close / unmount)", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+      coordinator.stop();
+      const calls = harness.listDirCalls.length;
+      await delay(80);
+      assert.equal(harness.listDirCalls.length, calls, "no polls after stop");
+      // Nothing can restart polling after stop.
+      harness.created[0].emit("error");
+      harness.storeListener?.();
+      await delay(40);
+      assert.equal(harness.listDirCalls.length, calls);
+    });
+
+    it("setHint stops polling for the old workspace and resumes only after the new source errors", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+
+      const before = harness.created.length;
+      coordinator.setHint("/ws/b");
+      assert.equal(harness.created.length, before + 1, "workspace switch opens exactly one new source");
+      assert.ok(
+        harness.urls[harness.urls.length - 1].includes("hint=%2Fws%2Fb"),
+        "new source is keyed by the new workspace"
+      );
+
+      const calls = harness.listDirCalls.length;
+      await delay(80);
+      assert.equal(harness.listDirCalls.length, calls, "no polling for the old workspace during the switch");
+      assert.equal(harness.fallback[harness.fallback.length - 1], false, "fallback cleared on workspace switch");
+
+      harness.created[harness.created.length - 1].emit("error");
+      await waitFor(() => harness.listDirCalls.length > calls, 1500, 5);
+      assert.equal(harness.fallback[harness.fallback.length - 1], true, "fallback resumes for the new workspace");
+      coordinator.stop();
+    });
+
+    it("expanded-path changes while polling adapt the polled set without stopping the fallback", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.includes("src"));
+
+      const before = harness.created.length;
+      harness.expanded = ["src", "test"];
+      harness.storeListener!();
+      assert.equal(harness.created.length, before + 1, "reconnect on expanded-path change");
+      assert.ok(harness.created[before - 1].closed, "old source closed before replacement");
+
+      harness.created[before].emit("error");
+      await waitFor(() => harness.listDirCalls.includes("test"), 1500, 5);
+      assert.equal(harness.fallback[harness.fallback.length - 1], true, "fallback stays active while adapting");
+      coordinator.stop();
     });
   });
 
