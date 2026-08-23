@@ -7,6 +7,7 @@ import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
 import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
+import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
@@ -380,7 +381,10 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       refreshDirs: handleRefreshDirs,
       onFileChange: handleFileChanges,
       onError: handleError,
-      createEventSource: (url) => new EventSource(url),
+      // Fetch-based SSE: the events endpoint requires the security header,
+      // which the native EventSource cannot send (403 -> permanent polling
+      // fallback), so the client streams the same framing through fetch.
+      createEventSource: (url) => createSseEventSource(url),
       listDir: async (path: string) => {
         const res = await fetchList(hint, path);
         return res.entries;
