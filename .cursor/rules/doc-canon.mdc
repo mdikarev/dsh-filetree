@@ -1,4 +1,8 @@
-<!-- doc-canon:start -->
+---
+description: Use the project canon as agent context
+alwaysApply: true
+---
+
 # doc-canon context rule
 
 For design and development, the context source of truth is `docs/canon/`. Run `doc-canon scout "<topic>"` first when the index is available and use its generated working-set manifest (ranked paths, contract roles, snippet stubs, verdict hint); scout seeds the code pack automatically when a code index exists, docs-only otherwise. If scout fails closed because the index is missing or corrupt, run `doc-canon index` (and `code-index build` when covered source exists), then re-run scout. Only if building fails, fall back to `doc-canon search` / `docs/canon/INDEX.md` and note every read outside a pack (`doc_miss: <query> -> docs:<path>` / `code_miss: <query> -> source:<path>`). Expand when unsure; do not silently under-read or invent structure. `docs/canon/future_plans/` holds directional initiatives for future system shape, not development tasks or checklists.
@@ -24,4 +28,3 @@ Exceptions: pure bugfix with intended behavior unchanged, `code_stale`, and non-
 For TypeScript/JavaScript, Go, C#, Rust, or Python, try `doc-canon code-index search <symbol> --root <repo>` before reading whole source files. Use bounded snippet windows first. When the result is empty or thin, read source as evidence and note `code_miss: <query> -> source:<path>`; a stale warning does not license bypassing the pack.
 
 This rule sets context priority; it does not replace other domain rules in the repository.
-<!-- doc-canon:end -->
