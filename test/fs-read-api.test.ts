@@ -106,11 +106,70 @@ describe("fs-api read", () => {
 
   it("rejects non-text files by extension", async () => {
     const imgPath = join(tempDir, "image.png");
-    await writeFile(imgPath, Buffer.from([0x89, 0x50, 0x4e, 0x47])); // PNG signature
+    // PNG signature + IHDR length/data: a realistic binary whose NUL bytes the
+    // content probe detects as well (a bare signature has no NUL and would be
+    // probed as text).
+    await writeFile(
+      imgPath,
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d])
+    );
 
     const { status, body } = await request(
       handler,
       `/filemanager-fs/read?hint=${encodeURIComponent(tempDir)}&path=image.png`,
+      { "x-dsh-filemanager": "1" }
+    );
+    assert.strictEqual(status, 400);
+    assert.match(body.error, /unsupported content type/i);
+  });
+
+  it("reads an extensionless dotfile like .gitignore", async () => {
+    const gitignorePath = join(tempDir, ".gitignore");
+    await writeFile(gitignorePath, "node_modules/\nlib/\n");
+
+    const { status, body } = await request(
+      handler,
+      `/filemanager-fs/read?hint=${encodeURIComponent(tempDir)}&path=.gitignore`,
+      { "x-dsh-filemanager": "1" }
+    );
+    assert.strictEqual(status, 200);
+    assert.strictEqual(body.name, ".gitignore");
+    assert.strictEqual(body.content, "node_modules/\nlib/\n");
+  });
+
+  it("reads an extensionless text file like Makefile", async () => {
+    const makePath = join(tempDir, "Makefile");
+    await writeFile(makePath, "build:\n\tnpm run build\n");
+
+    const { status, body } = await request(
+      handler,
+      `/filemanager-fs/read?hint=${encodeURIComponent(tempDir)}&path=Makefile`,
+      { "x-dsh-filemanager": "1" }
+    );
+    assert.strictEqual(status, 200);
+    assert.strictEqual(body.content, "build:\n\tnpm run build\n");
+  });
+
+  it("reads text with an unknown extension via content probe", async () => {
+    const notesPath = join(tempDir, "notes.abc");
+    await writeFile(notesPath, "some freeform text\n");
+
+    const { status } = await request(
+      handler,
+      `/filemanager-fs/read?hint=${encodeURIComponent(tempDir)}&path=notes.abc`,
+      { "x-dsh-filemanager": "1" }
+    );
+    assert.strictEqual(status, 200);
+  });
+
+  it("rejects a binary extensionless dotfile", async () => {
+    const dsStorePath = join(tempDir, ".DS_Store");
+    // Binary dotfile: NUL bytes inside the probe window.
+    await writeFile(dsStorePath, Buffer.from([0x00, 0x00, 0x00, 0x01, 0x42, 0x75, 0x64, 0x31]));
+
+    const { status, body } = await request(
+      handler,
+      `/filemanager-fs/read?hint=${encodeURIComponent(tempDir)}&path=.DS_Store`,
       { "x-dsh-filemanager": "1" }
     );
     assert.strictEqual(status, 400);

@@ -14,6 +14,8 @@ type GitEntry = {
 const HIDDEN_SYSTEM = new Set([".git"]);
 const MAX_ENTRIES = 2000;
 const MAX_READ_BYTES = 5 * 1024 * 1024;
+// Probe window for the content-based text heuristic (same size as git's).
+const TEXT_PROBE_BYTES = 8000;
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -34,6 +36,27 @@ function isTextByExtension(name: string): boolean {
   ]);
   if (name === 'Dockerfile') return true;
   return TEXT_EXT.has(ext);
+}
+
+/**
+ * Content-based text heuristic for names that fail the extension check: a file
+ * whose first TEXT_PROBE_BYTES contain no NUL byte is treated as text. This
+ * lets extensionless dotfiles (.gitignore, .env) and other extensionless text
+ * files (Makefile, LICENSE) be previewed, while binary files (which virtually
+ * always contain NULs early, e.g. .DS_Store, archives, images) are still
+ * rejected as "unsupported content type".
+ */
+async function isTextByContent(filePath: string): Promise<boolean> {
+  const fh = await open(filePath, "r");
+  try {
+    const st = await fh.stat();
+    const toRead = Math.min(st.size, TEXT_PROBE_BYTES);
+    const buf = Buffer.alloc(toRead);
+    if (toRead > 0) await fh.read(buf, 0, toRead, 0);
+    return !buf.includes(0);
+  } finally {
+    await fh.close();
+  }
 }
 
 async function readTextChunk(filePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean }> {
@@ -349,7 +372,7 @@ export function createHandler(defaultRoot: string) {
           }
 
           const name = basename(realTarget);
-          if (!isTextByExtension(name)) {
+          if (!isTextByExtension(name) && !(await isTextByContent(realTarget))) {
             return send(res, 400, { error: "unsupported content type" });
           }
 
