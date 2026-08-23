@@ -1,5 +1,6 @@
 import { readdir, stat, realpath, lstat, open } from "node:fs/promises";
 import { resolve, sep, basename, join } from "node:path";
+import { createEventsHandler } from "./fs-events.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 
@@ -241,6 +242,7 @@ function getEntryStatuses(
 }
 
 export function createHandler(defaultRoot: string) {
+  const eventsHandler = createEventsHandler(defaultRoot);
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       if (req.headers["x-dsh-filemanager"] !== "1") {
@@ -361,6 +363,9 @@ export function createHandler(defaultRoot: string) {
             throw e;
           }
         }
+        case "events":
+          return eventsHandler(req, res);
+
         default:
           return send(res, 404, { error: `unknown action: ${action}` });
       }

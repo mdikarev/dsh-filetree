@@ -14,6 +14,8 @@ export function apply(ctx: any): void {
         httpCtx.webServer.register({
           kind: "prefix",
           path: ROUTE_PREFIX,
+          // Dispatches root/list/read and the additive SSE events action
+          // (GET /filemanager-fs/events, implemented in src/fs-events.ts).
           handler: createHandler(resolveDefaultRoot()),
         }),
       "dsh-filemanager: /filemanager-fs file tree API"
