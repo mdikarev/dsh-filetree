@@ -13,11 +13,27 @@ import {
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-async function waitFor(fn: () => boolean, timeoutMs = 3000, intervalMs = 25): Promise<void> {
+type WaitOptions = {
+  timeoutMs?: number;
+  intervalMs?: number;
+  message?: string;
+};
+
+// Condition-based wait with a generous bounded timeout: the full suite runs
+// test files in parallel processes, so fs.watch event delivery (writeFile ->
+// FSEvents/kqueue -> watcher callback -> SSE write -> fetch reader) can stall
+// well beyond a few hundred ms under CPU contention. A tight fixed bound turns
+// that contention into false failures (observed: 3056ms once under load).
+async function waitFor(
+  fn: () => boolean,
+  { timeoutMs = 10000, intervalMs = 10, message = "condition not met" }: WaitOptions = {}
+): Promise<void> {
   const start = Date.now();
   for (;;) {
     if (fn()) return;
-    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor timed out after ${timeoutMs}ms: ${message}`);
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }
@@ -98,6 +114,38 @@ async function openSse(
   };
 }
 
+// macOS FSEvents can drop a single watch notification under parallel load
+// (verified empirically: the dropped event never arrives, but the next fresh
+// write is delivered promptly). fs.watch therefore cannot guarantee delivery
+// of any one event within a bounded time, so assert the end-to-end pipeline
+// with bounded retries: write a fresh file per attempt and require at least
+// one normalized event to be delivered.
+async function expectChangeEvent(
+  conn: SseConnection,
+  write: (attempt: number) => Promise<string>,
+  message: string
+): Promise<void> {
+  const MAX_ATTEMPTS = 5;
+  const ATTEMPT_TIMEOUT_MS = 5000;
+  const failures: string[] = [];
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const relPath = await write(attempt);
+    try {
+      await waitFor(
+        () =>
+          changedEvents(conn.buffer()).some(
+            (e) => e.type === "changed" && e.path === relPath && (e.kind === "change" || e.kind === "rename")
+          ),
+        { timeoutMs: ATTEMPT_TIMEOUT_MS, message: `${message} (${relPath})` }
+      );
+      return;
+    } catch (err) {
+      failures.push(String((err as Error).message));
+    }
+  }
+  throw new Error(`${message}: no change event delivered after ${MAX_ATTEMPTS} attempts: ${failures.join(" | ")}`);
+}
+
 describe("fs events", () => {
   let tempDir: string;
   let outsideDir: string;
@@ -121,7 +169,7 @@ describe("fs events", () => {
 
   afterEach(async () => {
     // The events handler cleans watchers when connections close; assert no leaks.
-    await waitFor(() => activeWatchCount() === 0);
+    await waitFor(() => activeWatchCount() === 0, { message: "active watchers drained after test" });
   });
 
   describe("parseWatchedPaths", () => {
@@ -382,12 +430,16 @@ describe("fs events", () => {
     it("emits event: changed with JSON data for file changes", async () => {
       const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify(["subdir"]))}`);
       try {
-        await waitFor(() => activeWatchCount() === 1);
-        await writeFile(join(tempDir, "subdir", "new.txt"), "hello");
-        await waitFor(() => {
-          const events = changedEvents(conn.buffer());
-          return events.some((e) => e.type === "changed" && e.path === "subdir/new.txt" && (e.kind === "change" || e.kind === "rename"));
-        });
+        await waitFor(() => activeWatchCount() === 1, { message: "subdir watcher created" });
+        await expectChangeEvent(
+          conn,
+          async (attempt) => {
+            const name = attempt === 1 ? "new.txt" : `new-${attempt}.txt`;
+            await writeFile(join(tempDir, "subdir", name), "hello");
+            return `subdir/${name}`;
+          },
+          "subdir file change event"
+        );
       } finally {
         await conn.close();
       }
@@ -396,10 +448,15 @@ describe("fs events", () => {
     it("emits events for root-level changes when watching the root", async () => {
       const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
       try {
-        await waitFor(() => activeWatchCount() === 1);
-        await writeFile(join(tempDir, "root-file.txt"), "x");
-        await waitFor(() =>
-          changedEvents(conn.buffer()).some((e) => e.type === "changed" && e.path === "root-file.txt")
+        await waitFor(() => activeWatchCount() === 1, { message: "root watcher created" });
+        await expectChangeEvent(
+          conn,
+          async (attempt) => {
+            const name = attempt === 1 ? "root-file.txt" : `root-file-${attempt}.txt`;
+            await writeFile(join(tempDir, name), "x");
+            return name;
+          },
+          "root-level change event"
         );
       } finally {
         await conn.close();
@@ -418,16 +475,32 @@ describe("fs events", () => {
     it("does not deliver events from inside .git", async () => {
       const conn = await openSse(handler, `hint=${encodeURIComponent(tempDir)}&paths=${encodeURIComponent(JSON.stringify([""]))}`);
       try {
-        await waitFor(() => activeWatchCount() === 1);
-        // Prove the stream is live with a normal event first.
-        await writeFile(join(tempDir, "before-git.txt"), "x");
-        await waitFor(() =>
-          changedEvents(conn.buffer()).some((e) => e.type === "changed" && e.path === "before-git.txt")
+        await waitFor(() => activeWatchCount() === 1, { message: "root watcher created" });
+        // Prove the stream is live with a normal event first (retrying fresh
+        // writes because macOS FSEvents can drop a single notification).
+        await expectChangeEvent(
+          conn,
+          async (attempt) => {
+            const name = attempt === 1 ? "before-git.txt" : `before-git-${attempt}.txt`;
+            await writeFile(join(tempDir, name), "x");
+            return name;
+          },
+          "before-git.txt change event"
         );
         const countBefore = changedEvents(conn.buffer()).length;
         await appendFile(join(tempDir, ".git", "HEAD"), "\nupdated\n");
-        await new Promise((r) => setTimeout(r, 300));
+        // Bounded grace window instead of a fixed sleep: a fixed wall-clock wait
+        // can miss late-arriving .git events under parallel load. Any event with
+        // a .git path inside the window fails the test.
+        const graceStart = Date.now();
+        let gitEvent: ChangedEvent | undefined;
+        while (Date.now() - graceStart < 1000) {
+          gitEvent = changedEvents(conn.buffer()).find((e) => e.path.split("/").includes(".git"));
+          if (gitEvent) break;
+          await new Promise((r) => setTimeout(r, 25));
+        }
         const countAfter = changedEvents(conn.buffer()).length;
+        assert.strictEqual(gitEvent, undefined, "no events from .git");
         assert.strictEqual(countAfter, countBefore, "no events from .git");
       } finally {
         await conn.close();
