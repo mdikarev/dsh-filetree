@@ -4,6 +4,7 @@ import { mkdtemp, rm, mkdir, writeFile, symlink, appendFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFileSync } from "node:child_process";
 import {
   parseWatchedPaths,
   normalizeFsEvent,
@@ -11,6 +12,7 @@ import {
   activeWatchCount,
   activeGitWatchCount,
 } from "../src/fs-events.js";
+import { createHandler } from "../src/fs-api.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -597,6 +599,80 @@ describe("fs events", () => {
       conn.abort();
       await waitFor(() => activeGitWatchCount() === 0, { message: "git watchers drained" });
       await conn.close();
+    });
+  });
+
+
+  describe("no feedback loop between list and git-changed", () => {
+    it("listing a git workspace does not emit git-changed", async () => {
+      const repo = await mkdtemp(join(tmpdir(), "fs-events-git-"));
+      try {
+        const git = (args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString();
+        git(["init", "-q"]);
+        git(["config", "user.email", "t@t.dev"]);
+        git(["config", "user.name", "T"]);
+        await writeFile(join(repo, "a.txt"), "v1");
+        git(["add", "a.txt"]);
+        git(["commit", "-q", "-m", "init"]);
+
+        const handler = createHandler(repo);
+        const server = createServer(async (req, res) => {
+          try {
+            await handler(req, res);
+          } catch {
+            // handler owns its errors
+          }
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const addr = server.address() as { port: number };
+        const base = `http://127.0.0.1:${addr.port}`;
+        const controller = new AbortController();
+        const chunks: string[] = [];
+        const decoder = new TextDecoder();
+        try {
+          const sseRes = await fetch(
+            `${base}/filemanager-fs/events?hint=${encodeURIComponent(repo)}&paths=${encodeURIComponent(JSON.stringify([""]))}`,
+            { headers: { "x-dsh-filemanager": "1" }, signal: controller.signal }
+          );
+          assert.strictEqual(sseRes.status, 200);
+          const reader = sseRes.body!.getReader();
+          const readLoop = (async () => {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(decoder.decode(value, { stream: true }));
+            }
+          })();
+          await waitFor(() => activeWatchCount() === 1, { message: "root watcher created" });
+
+          // Simulate the client refresh cycle: every list runs git status.
+          for (let i = 0; i < 8; i += 1) {
+            const listRes = await fetch(`${base}/filemanager-fs/list?hint=${encodeURIComponent(repo)}&path=`, {
+              headers: { "x-dsh-filemanager": "1" },
+            });
+            await listRes.json();
+            await new Promise((r3) => setTimeout(r3, 150));
+          }
+
+          const gitChanged = chunks
+            .join("")
+            .split("\n\n")
+            .filter((b) => b.includes("event: git-changed")).length;
+          assert.strictEqual(
+            gitChanged,
+            0,
+            "git status run by list must not trigger git-changed (feedback loop)"
+          );
+          controller.abort();
+          await readLoop.catch(() => {});
+        } finally {
+          controller.abort();
+          (server as any).closeAllConnections?.();
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
     });
   });
 

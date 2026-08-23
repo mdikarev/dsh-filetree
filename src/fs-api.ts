@@ -171,9 +171,14 @@ async function runGitStatus(root: string): Promise<Map<string, GitEntry>> {
   }
 
   const output = await new Promise<string>((resolvePromise) => {
+    // GIT_OPTIONAL_LOCKS=0 keeps git status strictly read-only: otherwise git
+    // may refresh the index stat cache and write .git/index, which the events
+    // endpoint watches - a list-triggered write would emit git-changed and
+    // create a refresh feedback loop (flashing loaders on expanded folders).
     const child = spawn("git", ["status", "--ignored", "--porcelain=v1"], {
       cwd: root,
       stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
     });
 
     let stdout = "";
