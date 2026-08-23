@@ -375,6 +375,29 @@ body[data-ds-dark-theme] {
   user-select: none;
   touch-action: none;
 }
+.fm-preview-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--fm-border);
+  border-radius: 7px;
+  background: var(--fm-surface-elevated);
+}
+.fm-preview-toggle button {
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+.fm-preview-toggle button:hover,
+.fm-preview-toggle button.is-active {
+  background: var(--fm-hover);
+  color: var(--dsw-alias-label-primary);
+}
 .fm-preview-title {
   flex: 1;
   min-width: 0;
@@ -405,6 +428,34 @@ body[data-ds-dark-theme] {
   overflow: auto;
   padding: 12px;
 }
+.fm-markdown-content {
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.fm-markdown-content h1, .fm-markdown-content h2, .fm-markdown-content h3,
+.fm-markdown-content h4, .fm-markdown-content h5, .fm-markdown-content h6 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.25;
+}
+.fm-markdown-content h1:first-child, .fm-markdown-content h2:first-child { margin-top: 0; }
+.fm-markdown-content p, .fm-markdown-content ul, .fm-markdown-content ol, .fm-markdown-content blockquote { margin: 0.7em 0; }
+.fm-markdown-content a { color: var(--dsw-alias-brand-primary); }
+.fm-markdown-content img { max-width: 100%; height: auto; border-radius: 6px; }
+.fm-markdown-content pre { overflow: auto; padding: 10px; border: 1px solid var(--fm-border); border-radius: 6px; background: var(--fm-surface-muted); }
+.fm-markdown-content code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.fm-markdown-content :not(pre) > code { padding: 2px 4px; border-radius: 4px; background: var(--fm-hover); }
+.fm-markdown-content blockquote { padding-left: 10px; border-left: 3px solid var(--fm-border-strong); color: var(--dsw-alias-label-secondary); }
+.fm-preview-warning, .fm-preview-render-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--fm-border);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.fm-preview-render-error { color: var(--dsw-alias-state-error-primary); }
 
 .fm-modal-pre--highlighted .hljs-comment,
 .fm-modal-pre--highlighted .hljs-quote {
