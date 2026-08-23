@@ -5,7 +5,8 @@ import { fetchFile } from "./preview-api.js";
 import { isMarkdownFile, renderMarkdown } from "./markdown-preview.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
-import { Tree } from "./Tree.js";
+import { Tree, type TreeHandle } from "./Tree.js";
+import { createLiveRefreshCoordinator } from "./live-refresh.js";
 import type { FileManagerStore } from "./store.js";
 
 interface PanelProps {
@@ -43,6 +44,7 @@ export function getPreviewPresentation(
 }
 
 export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
+  const treeRef = useRef<TreeHandle | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [rootName, setRootName] = useState("");
   const [rootPath, setRootPath] = useState("");
@@ -79,6 +81,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [hint, store]);
 
+  const handleError = useCallback((msg: string) => {
+    // Show inline error for individual folder failures
+    console.warn("[filemanager]", msg);
+  }, []);
+
   const loadRoot = useCallback(async () => {
     if (!hint) {
       setStatus("no-workspace");
@@ -101,6 +108,33 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       setStatus("error");
     }
   }, [hint]);
+
+  // Live refresh of the root listing without flashing the loading state;
+  // the last known entries are preserved on failure.
+  const refreshRootEntries = useCallback(async () => {
+    if (!hint) return;
+    try {
+      const rootRes = await fetchRoot(hint);
+      setRootPath(rootRes.root);
+      setRootName(rootRes.name);
+      const listRes = await fetchList(hint, "");
+      setEntries(sortEntries(listRes.entries));
+    } catch (err: any) {
+      handleError(`Failed to refresh root: ${err.message}`);
+    }
+  }, [hint, handleError]);
+
+  // Route affected directories from the live-refresh coordinator: the root
+  // listing is owned by the Panel, deeper directories by the Tree handle.
+  const handleRefreshDirs = useCallback((paths: string[]) => {
+    for (const path of paths) {
+      if (path === "") {
+        refreshRootEntries();
+      } else {
+        treeRef.current?.refreshPaths([path]);
+      }
+    }
+  }, [refreshRootEntries]);
 
   const commitLayout = useCallback(() => {
     const el = previewWindowRef.current;
@@ -228,14 +262,27 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     loadRoot();
   }, [loadRoot]);
 
+  // Live refresh: Panel owns the EventSource lifecycle keyed by hint and the
+  // expanded relative paths. The coordinator is recreated per hint/open so it
+  // always captures the current workspace; stop() closes the source, cancels
+  // the debounce and unsubscribes (no duplicate subscriptions).
+  useEffect(() => {
+    if (!open || !hint) return;
+    const coordinator = createLiveRefreshCoordinator({
+      hint,
+      getExpandedPaths: store.getExpandedPaths,
+      subscribeExpandedPaths: store.subscribeExpandedPaths,
+      refreshDirs: handleRefreshDirs,
+      onError: handleError,
+      createEventSource: (url) => new EventSource(url),
+    });
+    coordinator.start();
+    return () => coordinator.stop();
+  }, [open, hint, store, handleRefreshDirs, handleError]);
+
   const handleRefresh = useCallback(() => {
     loadRoot();
   }, [loadRoot]);
-
-  const handleError = useCallback((msg: string) => {
-    // Show inline error for individual folder failures
-    console.warn("[filemanager]", msg);
-  }, []);
 
   const previewStyle: React.CSSProperties = {
     ...(previewPos ? { left: previewPos.x, top: previewPos.y, right: "auto" } : {}),
@@ -288,6 +335,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
 
           {status === "ready" && (
             <Tree
+              ref={treeRef}
               hint={hint}
               entries={entries}
               onError={handleError}

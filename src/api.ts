@@ -41,6 +41,22 @@ export function fetchList(hint: string, path: string): Promise<ListResponse> {
   return fetchJson<ListResponse>(url);
 }
 
+/**
+ * Build the SSE events subscription URL for the given workspace hint and the
+ * relative expanded directories. Both parameters are encoded with
+ * encodeURIComponent so spaces become %20 (never "+") and plus signs stay
+ * %2B; the paths array travels as an encoded JSON array, matching the host's
+ * parseWatchedPaths contract.
+ */
+export function buildEventsUrl(hint: string, paths: string[]): string {
+  return (
+    "/filemanager-fs/events?hint=" +
+    encodeURIComponent(hint) +
+    "&paths=" +
+    encodeURIComponent(JSON.stringify(paths))
+  );
+}
+
 export function sortEntries(entries: Entry[]): Entry[] {
   return [...entries].sort((a, b) => {
     const aIsDir = a.kind === "dir" || a.kind === "symlink-dir";

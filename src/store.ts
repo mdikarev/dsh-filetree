@@ -28,6 +28,10 @@ export interface FileManagerStore {
   subscribe(listener: () => void): () => void;
   togglePath(path: string): void;
   isExpanded(path: string): boolean;
+  /** Snapshot of the currently expanded relative directories. */
+  getExpandedPaths(): string[];
+  /** Subscribe to expanded-path set changes only; returns an unsubscribe. */
+  subscribeExpandedPaths(listener: () => void): () => void;
   setWorkspace(workspaceHint: string): void;
   setPreviewLayout(layout: PreviewLayout | null): void;
   setPreviewMode(mode: PreviewMode): void;
@@ -140,6 +144,11 @@ export function createStore(): FileManagerStore {
     previewMode: "source"
   };
   const listeners = new Set<() => void>();
+  const expandedListeners = new Set<() => void>();
+
+  const notifyExpanded = (): void => {
+    expandedListeners.forEach((listener) => listener());
+  };
 
   return {
     getState: () => state,
@@ -150,6 +159,9 @@ export function createStore(): FileManagerStore {
       }
       if (partial.expandedPaths !== undefined && state.currentWorkspace) {
         saveExpandedPaths(state.currentWorkspace, state.expandedPaths);
+      }
+      if (partial.expandedPaths !== undefined) {
+        notifyExpanded();
       }
       listeners.forEach((l) => l());
     },
@@ -168,10 +180,18 @@ export function createStore(): FileManagerStore {
       if (state.currentWorkspace) {
         saveExpandedPaths(state.currentWorkspace, newExpandedPaths);
       }
+      notifyExpanded();
       listeners.forEach((l) => l());
     },
     isExpanded: (path: string) => {
       return state.expandedPaths.has(path);
+    },
+    getExpandedPaths: () => {
+      return [...state.expandedPaths];
+    },
+    subscribeExpandedPaths: (listener) => {
+      expandedListeners.add(listener);
+      return () => expandedListeners.delete(listener);
     },
     setWorkspace: (workspaceHint: string) => {
       if (state.currentWorkspace === workspaceHint) {
