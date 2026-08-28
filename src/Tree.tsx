@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
 import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry, type ListResponse } from "./api.js";
 import { staleExpandedPathsUnder } from "./live-refresh.js";
+import { DRAG_MIME, encodeDragPayload, buildDragMention } from "./drag-drop.js";
 import type { FileManagerStore } from "./store.js";
 
 interface TreeNodeProps {
@@ -160,6 +161,13 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
       <div
         className={`fm-row${isDir ? " fm-row--dir" : ""}${entryTone ? ` fm-row--${entryTone}` : ""}`}
         onClick={handleToggle}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DRAG_MIME, encodeDragPayload(fullPath, entry.kind));
+          const mention = buildDragMention(fullPath, entry.kind);
+          if (mention !== undefined) e.dataTransfer.setData("text/plain", mention);
+          e.dataTransfer.effectAllowed = "copy";
+        }}
       >
         <span className="fm-row-chevron">
           {isDir ? (expanded ? "▾" : "▸") : ""}

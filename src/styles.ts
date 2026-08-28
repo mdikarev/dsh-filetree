@@ -552,4 +552,11 @@ body[data-ds-dark-theme] {
   color: var(--fm-file-special);
 }
 
+/* Drop hint on the DSH composer card while a tree row is dragged over it. */
+[data-composer-card].fm-drop-hint {
+  outline: 2px dashed var(--dsw-alias-border-l3, rgba(127, 127, 127, 0.45));
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
 `;

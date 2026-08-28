@@ -24,6 +24,7 @@
   - Tree (src/Tree.tsx): дерево каталогов; папки первыми, затем по алфавиту без учёта регистра; ленивая загрузка детей при раскрытии; состояние раскрытия хранится по воркспейсу; клик по файлу открывает предпросмотр;
     раскрытые каталоги регистрируют reloader для targeted invalidation (`refreshPaths`), при размонтировании узла (например, после удаления каталога) reloader вычищается из реестра.
   - Док-панель предпросмотра (см. Key flows) с перетаскиванием за шапку, ресайзом и прокруткой; клиентская подсветка highlight.js для TypeScript, JavaScript, Python, Go, C# и Rust. Для Markdown-файлов она также предоставляет переключатель режимов «Исходник»/«Предпросмотр» и клиентский безопасный renderer.
+  - Drag-drop вставка пути (src/drag-drop.ts): строки дерева перетаскиваемы (кастомный MIME `application/x-dsh-filemanager` с payload `{ path, kind }` и fallback `text/plain`); document-level слушатели `dragover`/`drop` (capture) перехватывают дроп только когда payload содержит кастомный MIME и цель внутри композера (`[data-composer-card]`); вставка через `conversation.input.shell(sessionId).setDraft(next, editRange)` с восстановлением каретки.
 
 ## Key flows
 ### Предпросмотр файла (текстового)
@@ -68,6 +69,14 @@
 
 Ограничение подсветки: highlight.js относит распространённые ключевые слова, включая `if`/`export`/`const`, к общему классу `hljs-keyword`, поэтому они намеренно используют один акцентный цвет; более тонкое семантическое различение категорий ключевых слов не входит в текущую реализацию.
 
+### Вставка пути в поле ввода (drag-and-drop)
+1. Пользователь перетаскивает строку дерева (файл или папку) в область поля ввода чата. `dragstart` кладёт в `dataTransfer` кастомный тип `application/x-dsh-filemanager` (JSON `{ path, kind }` — относительный posix-путь и вид) и `text/plain` (текст упоминания) как fallback.
+2. Document-level слушатели (capture) видят `dragover`/`drop`. Они действуют только если `dataTransfer.types` содержит кастомный MIME и цель события находится внутри карточки композера (`closest('[data-composer-card]')`); иначе событие не трогается — дроп OS-файлов остаётся у image drop zone ui-attachment (реагирует только на `Files`).
+3. `dragover` вызывает `preventDefault()` и `dropEffect = 'copy'` (разрешает дроп); карточка получает класс-подсветку.
+4. `drop` вызывает `preventDefault()`: читается payload, определяется текущая сессия (`ctx.sessions`), резолвится шелл ввода `ctx.conversation.input.shell(sessionId)`, снимается снапшот состояния (draft, draftRev, phase). Каретка берётся из `textarea.selectionStart/End` (браузер ставит её в точку дропа до события `drop`).
+5. Строится упоминание: файл — `@path`, папка — `@path/`, пробелы — `@"path"`; путь с управляющими символами или кавычками не вставляется.
+6. Вставка идёт через единственный путь записи машины: `setDraft(draft.slice(0, start) + mention + draft.slice(end), { start, end, insertedLength: mention.length })`; каретка восстанавливается в `start + mention.length` (как в родном paste-хендлере композера). Дроп при фазе `submitting`/`adjudicating` или отсутствии сессии/шелла игнорируется.
+
 ## Public interfaces
 ### GET /filemanager-fs/read
 Query:
@@ -108,6 +117,8 @@ Response (200): `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `C
 - `fetchFile(hint, path): Promise<{ name, path, content, truncated?: boolean }>`
 - `buildEventsUrl(hint, paths): string` — `/filemanager-fs/events?hint=<enc>&paths=<enc JSON-array>` (`encodeURIComponent`: пробелы как `%20`, плюсы как `%2B`)
 - `createSseEventSource(url): LiveEventSource` — fetch-based SSE-клиент (src/sse-client.ts): отправляет header `x-dsh-filemanager: 1` и зеркалирует поверхность EventSource (`open`, именованные события, `error`, `close()` через AbortController)
+- `buildDragMention(path, kind): string | undefined` — текст упоминания для переноса: `@path` (файл), `@path/` (папка), `@"path"` (пробелы); `undefined` для путей с управляющими символами/кавычками
+- Drag payload (перенос из дерева): MIME `application/x-dsh-filemanager` → JSON `{ "path": "<отн. posix-путь>", "kind": "file" | "dir" | "symlink-file" | "symlink-dir" }`; fallback `text/plain` — текст упоминания
 
 ## Usage examples
 - `curl -H "x-dsh-filemanager: 1"   \
@@ -152,6 +163,10 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Смена workspace — старые SSE, watcher-ы, debounce и polling останавливаются; создаётся контур нового workspace
 - Несколько быстрых событий — объединяются debounce-окном по пути и дают один refresh
 - Ошибка `fetchList` при invalidation — сохраняется последнее состояние узла и используется существующая ошибка загрузки
+- Дроп с чужими типами данных или мимо композера — событие не перехватывается (image drop zone и браузерные обработчики работают как обычно)
+- Дроп при занятом композере (фаза `submitting`/`adjudicating`), отсутствии сессии или шелла ввода — вставка игнорируется
+- Путь с управляющими символами или кавычками — упоминание не строится, вставка пропускается
+- Путь содержит пробелы — вставляется quoted-форма `@"path"`, чтобы `@`-токен оставался корректным по грамматике
 
 ## Success criteria
 - Эндпоинт `read` возвращает ожидаемую форму JSON
@@ -167,6 +182,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Соединение восстанавливается после сбоя (reconnect с backoff), polling fallback работает и останавливается при восстановлении SSE, ручной ↻ продолжает работать
 - Git-бейджи обновляются автоматически после git-операций (commit/stage/checkout): сервер шлёт `git-changed` при изменении `index`/`HEAD`/refs, клиент перечитывает раскрытые каталоги; для воркспейса без `.git` событие просто не отправляется
 - При disconnect/закрытии панели watcher-ы, SSE-соединение и таймеры освобождаются (дубликаты подписок не возникают)
+- Перетаскивание строки дерева в поле ввода вставляет упоминание пути в позицию каретки; `@`-упоминание соответствует грамматике DSH (модель трактует его как явно упомянутый файл); папки получают завершающий `/`
 
 ## Related canon
 - См. Overview — назначение и границы
@@ -187,3 +203,4 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Позиция и размер панели предпросмотра запоминаются в localStorage в рамках воркспейса (ключ по hint, как для развёрнутых папок); при открытии файла панель восстанавливает сохранённое расположение, иначе — правый край
 - Живое обновление: серверный `fs.watch` на раскрытые каталоги, доставка SSE (`event: changed`), debounce 250 мс, targeted invalidation, reconnect с backoff (500 мс → кап 10 с), polling fallback раз в 5 секунд (снапшоты имён/типа/размера/mtime)
 - События вне workspace и из `.git` не отправляются; пути нормализуются в относительные posix-пути; корень workspace в подписке — пустая строка `""`
+- Drag-and-drop: кастомный MIME `application/x-dsh-filemanager`, target-детекция по `[data-composer-card]`, вставка через `conversation.input.shell(sessionId).setDraft` с editRange; текст упоминания — грамматика `@`-токенов (`@path`, `@path/`, `@"path"`)

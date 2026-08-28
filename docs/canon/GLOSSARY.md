@@ -19,6 +19,9 @@
 ### git-changed (SSE-событие)
 Событие, которое сервер шлёт при изменении git-метаданных воркспейса (`.git/index`, `.git/HEAD`, refs): клиент перечитывает наблюдаемые каталоги, чтобы обновить git-бейджи без ручного ↻.
 
+### Композер (поле ввода чата)
+Поле ввода DeepSeek Harness Web GUI — карточка с data-атрибутом `data-composer-card`; контролируется per-session input machine, доступной плагинам через сервис `conversation` (`ctx.conversation.input.shell(sessionId)`). Drag-and-drop строк дерева вставляет `@`-упоминание пути именно сюда (src/drag-drop.ts).
+
 ## Naming conventions
 <!-- Record project-wide naming rules. -->
 
