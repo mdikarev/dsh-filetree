@@ -26,6 +26,13 @@ A toggle tab at the sidebar edge opens a panel showing the directory tree of the
 
 All requests require the `x-dsh-filemanager: 1` header.
 
+## Compatibility
+
+- **Node** >= 20 (`engines`).
+- **React 18** — provided by the DSH web host, not bundled (peer `^18.2.0`; verified against 18.3.1).
+- **DSH**: built and tested against `@deepseek-ai/dsh@0.1.1-rc.2` (web profile). The plugin host and client APIs are pre-1.0 and not yet declared stable — pin the dsh version you deploy and re-test after dsh upgrades. A full version-matrix smoke run is planned once CI is in place.
+- **Scope**: the panel is read-only (tree + preview + drag-to-composer); it never mutates files. Server endpoints are served by the dsh host on localhost and rely on the `x-dsh-filemanager` header plus same-origin/CORS behavior of the browser — treat the local dsh process as the trust boundary.
+
 ## Documentation
 
 Behavioral source of truth lives in `docs/canon/` (doc-canon).
