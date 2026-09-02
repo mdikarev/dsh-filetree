@@ -132,6 +132,19 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     previewPathRef.current = previewPath;
   }, [previewPath]);
 
+  // Latest workspace hint for coordinator callbacks (refreshRootEntries,
+  // listDirStable) without restarting the coordinator whenever the workspace
+  // changes; mirrors the previewPathRef pattern above.
+  const hintRef = useRef(hint);
+
+  useEffect(() => {
+    hintRef.current = hint;
+  }, [hint]);
+
+  // The live-refresh coordinator lives for the whole open panel; hint changes
+  // are routed through coordinatorRef.current.setHint (see the effects below).
+  const coordinatorRef = useRef<ReturnType<typeof createLiveRefreshCoordinator> | null>(null);
+
   // Устанавливаем текущий воркспейс в store при изменении hint
   useEffect(() => {
     if (hint) {
@@ -184,18 +197,19 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // Live refresh of the root listing without flashing the loading state;
   // the last known entries are preserved on failure.
   const refreshRootEntries = useCallback(async () => {
-    if (!hint) return;
+    const currentHint = hintRef.current;
+    if (!currentHint) return;
     try {
-      const rootRes = await fetchRoot(hint);
+      const rootRes = await fetchRoot(currentHint);
       setRootPath(rootRes.root);
       setRootName(rootRes.name);
-      const listRes = await fetchList(hint, "");
+      const listRes = await fetchList(currentHint, "");
       setEntries(sortEntries(listRes.entries));
       pruneRootStale(listRes);
     } catch (err: any) {
       handleError(`Failed to refresh root: ${err.message}`);
     }
-  }, [hint, handleError, pruneRootStale]);
+  }, [handleError, pruneRootStale]);
 
   // Route affected directories from the live-refresh coordinator: the root
   // listing is owned by the Panel, deeper directories by the Tree handle.
@@ -208,6 +222,16 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       }
     }
   }, [refreshRootEntries]);
+
+  // Stable listDir for the coordinator's polling fallback: read the current
+  // hint through the ref so a poll in flight across a workspace switch still
+  // lists the current workspace rather than the hint captured at creation.
+  const listDirStable = useCallback(async (path: string) => {
+    const currentHint = hintRef.current;
+    if (!currentHint) return [];
+    const res = await fetchList(currentHint, path);
+    return res.entries;
+  }, []);
 
   // Coordinator change callback: match the debounced change batch against the
   // current preview identity. Reading previewPath through a ref keeps the
@@ -368,14 +392,16 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     loadRoot();
   }, [loadRoot]);
 
-  // Live refresh: Panel owns the EventSource lifecycle keyed by hint and the
-  // expanded relative paths. The coordinator is recreated per hint/open so it
-  // always captures the current workspace; stop() closes the source, cancels
-  // the debounce and unsubscribes (no duplicate subscriptions).
+  // Live refresh: ONE coordinator per open panel, created with the panel's
+  // current hint when it opens and stopped when it closes. It owns the
+  // EventSource lifecycle, the expanded-path subscription and the polling
+  // fallback for the panel's whole open lifetime; later hint changes are
+  // routed through setHint (Effect B below) instead of recreating it, so this
+  // effect's dependency array deliberately excludes hint.
   useEffect(() => {
-    if (!open || !hint) return;
+    if (!open) return;
     const coordinator = createLiveRefreshCoordinator({
-      hint,
+      hint: hintRef.current,
       getExpandedPaths: store.getExpandedPaths,
       subscribeExpandedPaths: store.subscribeExpandedPaths,
       refreshDirs: handleRefreshDirs,
@@ -385,15 +411,26 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       // which the native EventSource cannot send (403 -> permanent polling
       // fallback), so the client streams the same framing through fetch.
       createEventSource: (url) => createSseEventSource(url),
-      listDir: async (path: string) => {
-        const res = await fetchList(hint, path);
-        return res.entries;
-      },
+      listDir: listDirStable,
       onFallbackChange: setLiveFallback,
     });
+    coordinatorRef.current = coordinator;
     coordinator.start();
-    return () => coordinator.stop();
-  }, [open, hint, store, handleRefreshDirs, handleFileChanges, handleError]);
+    return () => {
+      coordinatorRef.current = null;
+      coordinator.stop();
+    };
+  }, [open, store, handleRefreshDirs, handleFileChanges, handleError, listDirStable]);
+
+  // Route hint changes through setHint so the open coordinator's subscription
+  // follows the panel's current workspace without a restart. Declared after
+  // the store.setWorkspace effect and the root-load effect, so the store and
+  // the root listing already reflect the new workspace before setHint reads
+  // the expanded set.
+  useEffect(() => {
+    if (!open || !hint) return;
+    coordinatorRef.current?.setHint(hint);
+  }, [open, hint]);
 
   const handleRefresh = useCallback(() => {
     loadRoot();
