@@ -72,6 +72,7 @@ function makeHarness(
     reconnectBaseMs: number;
     reconnectMaxMs: number;
     pollIntervalMs: number;
+    inactivityMs: number;
     onError: (message: string) => void;
   }> = {}
 ): { harness: Harness; coordinator: ReturnType<typeof createLiveRefreshCoordinator> } {
@@ -117,6 +118,7 @@ function makeHarness(
     ...(overrides.reconnectBaseMs !== undefined ? { reconnectBaseMs: overrides.reconnectBaseMs } : {}),
     ...(overrides.reconnectMaxMs !== undefined ? { reconnectMaxMs: overrides.reconnectMaxMs } : {}),
     ...(overrides.pollIntervalMs !== undefined ? { pollIntervalMs: overrides.pollIntervalMs } : {}),
+    ...(overrides.inactivityMs !== undefined ? { inactivityMs: overrides.inactivityMs } : {}),
   });
   return { harness, coordinator };
 }
@@ -264,6 +266,7 @@ describe("live refresh coordinator", () => {
       assert.equal(harness.urls.length, 1);
       assert.equal(harness.urls[0], buildEventsUrl("/work space", ["", "src/a b", "test"]));
       assert.ok(!harness.urls[0].includes("+"), "spaces must be %20, not +");
+      coordinator.stop();
     });
 
     it("always watches the root (empty path) alongside the expanded directories", () => {
@@ -296,6 +299,7 @@ describe("live refresh coordinator", () => {
       harness.expanded = ["test", "src"];
       harness.storeListener!();
       assert.equal(harness.created.length, 2);
+      coordinator.stop();
     });
 
     it("reconnects with the new hint on setHint and ignores old-workspace events", async () => {
@@ -314,6 +318,7 @@ describe("live refresh coordinator", () => {
       harness.created[1].emit("changed", { data: change("src/new.ts") });
       await waitFor(() => harness.refreshed.length === 1);
       assert.deepStrictEqual(harness.refreshed[0], ["src"]);
+      coordinator.stop();
     });
 
     it("start is idempotent: no duplicate subscriptions or sources", () => {
@@ -322,6 +327,7 @@ describe("live refresh coordinator", () => {
       coordinator.start();
       assert.equal(harness.created.length, 1);
       assert.equal(harness.subscribeCalls, 1);
+      coordinator.stop();
     });
 
     it("stop closes the source, unsubscribes and cancels pending refresh", async () => {
@@ -356,6 +362,7 @@ describe("live refresh coordinator", () => {
       harness.created[0].emit("changed", { data: change("lib/b.ts") });
       await delay(60);
       assert.equal(harness.refreshed.length, 2);
+      coordinator.stop();
     });
 
     it("drops malformed SSE payloads without refreshing", async () => {
@@ -366,6 +373,7 @@ describe("live refresh coordinator", () => {
       harness.created[0].emit("changed", { data: change("/etc/passwd") });
       await delay(60);
       assert.deepStrictEqual(harness.refreshed, []);
+      coordinator.stop();
     });
   });
 
@@ -732,6 +740,146 @@ describe("live refresh coordinator", () => {
       harness.created[0].emit("git-changed");
       await delay(80);
       assert.deepStrictEqual(harness.refreshed, []);
+      coordinator.stop();
+    });
+  });
+
+  describe("inactivity watchdog", () => {
+    it("fires into the error path after inactivityMs with no activity", async () => {
+      const errors: string[] = [];
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        inactivityMs: 60,
+        pollIntervalMs: 20,
+        onError: (message: string) => errors.push(message),
+      });
+      coordinator.start();
+      assert.equal(harness.created.length, 1);
+      assert.deepStrictEqual(errors, [], "no error inside the inactivity window");
+
+      await waitFor(() => errors.length === 1);
+      assert.equal(errors[0], "live refresh stalled; switching to polling");
+      assert.equal(harness.created[0].closed, true, "the stalled source is closed");
+      assert.equal(harness.created.length, 1, "the reconnect is scheduled, not immediate");
+      assert.deepStrictEqual(harness.fallback, [true], "the polling fallback starts on watchdog fire");
+
+      // The watchdog fire reuses the error path: backoff eventually opens a
+      // new source (created[0] stays closed, poller keeps running until stop).
+      await waitFor(() => harness.created.length === 2);
+      assert.equal(harness.created[1].closed, false);
+      coordinator.stop();
+    });
+
+    it("resets the watchdog on ping activity and never fires", async () => {
+      const errors: string[] = [];
+      const { harness, coordinator } = makeHarness({
+        inactivityMs: 80,
+        onError: (message: string) => errors.push(message),
+      });
+      coordinator.start();
+      // Heartbeats every 40ms, continuing past the inactivity window; each one
+      // must push the stall deadline forward.
+      for (let i = 0; i < 3; i += 1) {
+        harness.created[0].emit("ping");
+        await delay(40);
+      }
+      // Without the resets the watchdog would have fired at inactivityMs (80ms);
+      // by this point the run is well past that window, yet each ping pushed the
+      // stall deadline forward, so no error may have fired.
+      await delay(20);
+      assert.deepStrictEqual(errors, []);
+      coordinator.stop();
+    });
+
+    it("resets the watchdog on changed events and never fires", async () => {
+      const errors: string[] = [];
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        debounceMs: 20,
+        inactivityMs: 80,
+        onError: (message: string) => errors.push(message),
+      });
+      coordinator.start();
+      for (const path of ["src/a.ts", "src/b.ts", "src/c.ts"]) {
+        harness.created[0].emit("changed", { data: change(path) });
+        await delay(40);
+      }
+      await waitFor(() => harness.refreshed.length === 3);
+      assert.deepStrictEqual(
+        harness.refreshed,
+        [["src"], ["src"], ["src"]],
+        "changed events still refresh the affected parent as usual"
+      );
+      // An un-reset watchdog would have fired at inactivityMs (80ms); the
+      // changed events kept resetting it. Check while still inside the window
+      // the last event opened (its +80ms deadline has not passed yet).
+      await delay(20);
+      assert.deepStrictEqual(errors, []);
+      coordinator.stop();
+    });
+
+    it("stop clears the watchdog so it never fires after stop", async () => {
+      const errors: string[] = [];
+      const { harness, coordinator } = makeHarness({
+        inactivityMs: 60,
+        onError: (message: string) => errors.push(message),
+      });
+      coordinator.start();
+      coordinator.stop();
+      await delay(160); // well past the inactivity window
+      assert.deepStrictEqual(errors, [], "no watchdog fire after stop");
+      assert.equal(harness.created.length, 1, "no reconnect after stop");
+    });
+  });
+
+  describe("setHint poller transitions", () => {
+    it("after setHint, a subsequent SSE error restarts the poller exactly once", async () => {
+      const { harness, coordinator } = makeHarness({
+        expanded: ["src"],
+        pollIntervalMs: 20,
+        reconnectBaseMs: 10,
+        reconnectMaxMs: 40,
+      });
+      coordinator.start();
+      harness.created[0].emit("error");
+      await waitFor(() => harness.listDirCalls.length >= 1);
+      assert.deepStrictEqual(harness.fallback, [true], "poller active on the first error");
+
+      // The error's reconnect (10ms backoff) may already have opened a fresh
+      // source before the first poll landed, so count the switch relative to the
+      // sources live at setHint time.
+      const before = harness.created.length;
+      coordinator.setHint("/ws/b");
+      assert.equal(harness.created.length, before + 1, "setHint opens exactly one new source");
+      assert.equal(harness.created[before - 1].closed, true, "old source closed before the new one opens");
+      assert.deepStrictEqual(harness.fallback, [true, false], "setHint stops the old poller");
+
+      const paused = harness.listDirCalls.length;
+      await delay(80);
+      assert.equal(harness.listDirCalls.length, paused, "no polling while the new SSE connection is silent");
+
+      harness.created[harness.created.length - 1].emit("error");
+      await waitFor(() => harness.listDirCalls.length > paused);
+      assert.deepStrictEqual(
+        harness.fallback,
+        [true, false, true],
+        "poller restarts exactly once on the next error (no double poller)"
+      );
+      // The restarted poller lists the current watched set (root + expanded).
+      assert.ok(harness.listDirCalls.includes(""), "root is polled again after the restart");
+      assert.ok(harness.listDirCalls.includes("src"), "expanded dirs are polled again after the restart");
+      coordinator.stop();
+    });
+
+    it("setHint closes the old source before opening the new one", async () => {
+      const { harness, coordinator } = makeHarness({ hint: "/ws/a" });
+      coordinator.start();
+      assert.equal(harness.created.length, 1);
+      coordinator.setHint("/ws/b");
+      assert.equal(harness.created.length, 2, "the created-source list grows by exactly one");
+      assert.equal(harness.created[0].closed, true, "previous source was closed");
+      assert.equal(harness.created[1].closed, false);
+      assert.ok(harness.urls[1].includes("hint=%2Fws%2Fb"), "the new source is keyed by the new hint");
       coordinator.stop();
     });
   });

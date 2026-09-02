@@ -139,6 +139,13 @@ export function parseSseChange(data: string): FileChange | null {
 export const LIVE_REFRESH_DEBOUNCE_MS = 250;
 
 /**
+ * Inactivity bound for a live SSE connection (ms): three missed heartbeats
+ * (the server heartbeat interval is SSE_HEARTBEAT_MS = 10s). A connection
+ * that stays silent this long is treated as stalled and switched to polling.
+ */
+export const LIVE_REFRESH_INACTIVITY_MS = 30000;
+
+/**
  * Return the deduplicated union of directories that must be re-fetched for a
  * batch of changes: the expanded parent of each nested change plus the root
  * (empty string) for root-level changes, because the root listing is always
@@ -274,6 +281,8 @@ export interface LiveRefreshCoordinatorOptions {
   debounceMs?: number;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
+  /** Stalled-connection timeout; defaults to LIVE_REFRESH_INACTIVITY_MS. */
+  inactivityMs?: number;
 }
 
 export interface LiveRefreshCoordinator {
@@ -300,6 +309,7 @@ export function createLiveRefreshCoordinator(
   const debounceMs = options.debounceMs ?? LIVE_REFRESH_DEBOUNCE_MS;
   const reconnectBaseMs = options.reconnectBaseMs ?? 500;
   const reconnectMaxMs = options.reconnectMaxMs ?? 10000;
+  const inactivityMs = options.inactivityMs ?? LIVE_REFRESH_INACTIVITY_MS;
 
   let started = false;
   let hint = options.hint;
@@ -307,6 +317,7 @@ export function createLiveRefreshCoordinator(
   let source: LiveEventSource | null = null;
   let epoch = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let unsubscribe: (() => void) | null = null;
   let poller: DirectoryPoller | null = null;
@@ -389,6 +400,29 @@ export function createLiveRefreshCoordinator(
     }, delayMs);
   };
 
+  const clearWatchdog = (): void => {
+    if (watchdogTimer !== null) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  };
+
+  // A stalled connection (a fetch that hangs before open, or one that stays
+  // silent past inactivityMs) must not freeze the tree silently: firing takes
+  // the exact error path, so backoff and the polling fallback stay uniform.
+  const resetWatchdog = (): void => {
+    if (!started) return;
+    clearWatchdog();
+    watchdogTimer = setTimeout(() => {
+      watchdogTimer = null;
+      if (!started) return;
+      options.onError?.("live refresh stalled; switching to polling");
+      closeSource();
+      scheduleReconnect();
+      startPoller();
+    }, inactivityMs);
+  };
+
   const openSource = (): void => {
     if (!started) return;
     epoch += 1;
@@ -410,26 +444,37 @@ export function createLiveRefreshCoordinator(
       const change = parseSseChange(String(event?.data ?? ""));
       if (!change) return;
       debouncer.push(change);
+      resetWatchdog();
     });
 
     next.addEventListener("open", () => {
       if (!started || myEpoch !== epoch) return;
       reconnectAttempt = 0;
       stopPoller();
+      resetWatchdog();
     });
 
     next.addEventListener("git-changed", () => {
       if (!started || myEpoch !== epoch) return;
       scheduleGitRefresh();
+      resetWatchdog();
+    });
+
+    next.addEventListener("ping", () => {
+      if (!started || myEpoch !== epoch) return;
+      resetWatchdog();
     });
 
     next.addEventListener("error", () => {
       if (!started || myEpoch !== epoch) return;
+      clearWatchdog();
       options.onError?.("live refresh connection lost; will retry");
       closeSource();
       scheduleReconnect();
       startPoller();
     });
+
+    resetWatchdog();
   };
 
   const reconnect = (): void => {
@@ -460,6 +505,7 @@ export function createLiveRefreshCoordinator(
       started = false;
       epoch += 1;
       clearReconnectTimer();
+      clearWatchdog();
       if (gitRefreshTimer !== null) {
         clearTimeout(gitRefreshTimer);
         gitRefreshTimer = null;
