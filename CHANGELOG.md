@@ -1,0 +1,29 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Workspace file tree panel with toggle tab at the sidebar edge
+- Lazy directory loading on expand; git status badges for files and folders
+- File preview dock (drag header to move, resizable): text up to 5 MB,
+  Markdown render with source/rendered toggle, syntax highlighting
+- Live tree refresh: SSE streaming with polling fallback
+- Drag files/folders from the tree into the composer as @-mentions
+- Full-name tooltip on hover for truncated tree rows
+- CI workflow (typecheck + tests + build), MIT license, CHANGELOG
+
+### Changed
+
+- Typecheck now runs in CI (7 latent type errors fixed); `npm pack` always
+  builds `lib/` first via the prepack script
+
+### Security
+
+- Path containment (realpath + isInside) and symlink-escape rejection;
+  read-only git status (`GIT_OPTIONAL_LOCKS=0`); layered markdown sanitizing
