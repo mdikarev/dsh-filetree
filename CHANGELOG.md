@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Server caches the workspace git-status snapshot (TTL + event
+  invalidation); bursts of refresh listings now share a single git run
 - Typecheck now runs in CI (7 latent type errors fixed); `npm pack` always
   builds `lib/` first via the prepack script
 

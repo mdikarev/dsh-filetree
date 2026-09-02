@@ -14,7 +14,7 @@
 |---|-------|-----|--------------|--------|
 | 1 | **H-lite** — release hygiene | LICENSE, npm metadata, `typecheck` script (+ typescript devDep), `prepack: build`, CI (test + typecheck + build), CHANGELOG | none | ☑ (commit `3fd8e21`) |
 | 2 | **E-lite** — dsh compat declaration | verify against current dsh rc; README "tested with" line; full version-matrix smoke moves behind CI (later) | H-lite (CI) | ☑ (commit `a8ba424`) |
-| 3 | **A** — performance on large repos | git-status snapshot cache (TTL + event invalidation), per-handler instance; watchers stay per-dir (W1) | spec drafted — `docs/superpowers/specs/2026-09-02-git-status-cache-design.md` | ☐ |
+| 3 | **A** — performance on large repos | git-status snapshot cache (TTL + event invalidation), per-handler instance; watchers stay per-dir (W1) | spec drafted — `docs/superpowers/specs/2026-09-02-git-status-cache-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-git-status-cache.md` |
 | 4 | **B** — live-refresh resilience | anti-race on workspace switch (generation token), reconnect policy, guarded double-subscribe, transition tests | none (own spec/plan) | ☐ |
 | 5 | **G** — i18n + basic a11y | English default UI (RU preserved) via DSH client locale; tree roles/aria-expanded, keyboard nav, Esc-to-close, focus styles | none | ☐ |
 | 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☐ |
