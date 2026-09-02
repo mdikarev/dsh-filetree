@@ -171,16 +171,13 @@ body[data-ds-dark-theme] {
   padding: 5px 8px;
   border: 1px solid transparent;
   border-radius: 8px;
-  cursor: default;
+  cursor: pointer;
   font-size: 13px;
   color: var(--dsw-alias-label-secondary);
   white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.fm-row--dir {
-  cursor: pointer;
-}
-.fm-row--dir:hover {
+.fm-row:hover {
   background: var(--fm-hover);
   border-color: var(--fm-border);
   color: var(--dsw-alias-label-primary);
@@ -299,6 +296,32 @@ body[data-ds-dark-theme] {
 }
 .fm-row-children {
   margin-left: 16px;
+}
+
+/* Тултип полного имени для обрезанной строки (рендерится на <body>,
+   см. src/tooltip.ts: .fm-panel transform/clip режет fixed-потомков). */
+.fm-name-tooltip {
+  position: fixed;
+  z-index: 2147483646; /* чуть ниже док-панели предпросмотра (2147483647) */
+  box-sizing: border-box;
+  max-width: min(480px, calc(100vw - 16px));
+  padding: 6px 10px;
+  border: 1px solid var(--fm-border-strong);
+  border-radius: 8px;
+  background: var(--fm-surface-elevated);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: fm-tip-in 0.1s ease-out;
+}
+@keyframes fm-tip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* States */

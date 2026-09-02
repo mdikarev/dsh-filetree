@@ -1,8 +1,9 @@
 // src/Tree.tsx
-import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, type MouseEvent as ReactMouseEvent } from "react";
 import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry, type ListResponse } from "./api.js";
 import { staleExpandedPathsUnder } from "./live-refresh.js";
 import { DRAG_MIME, encodeDragPayload, buildDragMention } from "./drag-drop.js";
+import { showNameTooltip, hideNameTooltip, repositionNameTooltip, type TooltipToken } from "./tooltip.js";
 import type { FileManagerStore } from "./store.js";
 
 interface TreeNodeProps {
@@ -35,6 +36,15 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState({});
+
+  // Полное имя при обрезке: замер делаем в момент наведения по DOM (не по
+  // состоянию), чтобы не зависеть от перерендеров строки.
+  const nameRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipToken = useRef<TooltipToken>({});
+  const hoverTimerRef = useRef<number | null>(null);
+  const cursorRef = useRef<{ x: number; y: number } | null>(null);
+  const tipActiveRef = useRef(false);
+  const [tipActive, setTipActive] = useState(false);
 
   const isDir = entry.kind === "dir" || entry.kind === "symlink-dir";
   const fullPath = path ? `${path}/${entry.name}` : entry.name;
@@ -156,13 +166,95 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
     store.togglePath(fullPath);
   }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, store, applyListing]);
 
+  // --- Tooltip с полным именем для обрезанных названий -------------------
+
+  const cancelPendingTip = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }, []);
+
+  const hideFullNameTip = useCallback(() => {
+    cancelPendingTip();
+    tipActiveRef.current = false;
+    setTipActive(false);
+    hideNameTooltip(tooltipToken.current);
+  }, [cancelPendingTip]);
+
+  // Название обрезано? Читаем геометрию прямо в момент наведения: ellipsis
+  // активен, когда текст шире видимой области (scrollWidth > clientWidth).
+  const isNameClipped = useCallback((): boolean => {
+    const el = nameRef.current;
+    return el !== null && el.scrollWidth > el.clientWidth + 1;
+  }, []);
+
+  const scheduleFullNameTip = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      cancelPendingTip();
+      // Показываем подсказку только если имя действительно не влезает.
+      if (!isNameClipped()) return;
+      cursorRef.current = { x: e.clientX, y: e.clientY };
+      // Небольшая задержка, чтобы тултип не мигал при движении мыши по дереву.
+      hoverTimerRef.current = window.setTimeout(() => {
+        hoverTimerRef.current = null;
+        const cursor = cursorRef.current ?? { x: e.clientX, y: e.clientY };
+        tipActiveRef.current = true;
+        setTipActive(true);
+        showNameTooltip(tooltipToken.current, entry.name, cursor);
+      }, 400);
+    },
+    [cancelPendingTip, entry.name, isNameClipped]
+  );
+
+  const trackCursor = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    cursorRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  // Снять наш таймер/тултип при размонтировании строки (сворачивание папки,
+  // смена воркспейса и т.п.), чтобы не осталось «осиротевшего» тултипа.
+  useEffect(() => {
+    const token = tooltipToken.current;
+    return () => {
+      if (hoverTimerRef.current !== null) window.clearTimeout(hoverTimerRef.current);
+      hideNameTooltip(token);
+    };
+  }, []);
+
+  // Пока тултип виден: прячем при прокрутке/колесе (контент под курсором
+  // уезжает) и перепозиционируем при ресайзе окна.
+  useEffect(() => {
+    if (!tipActive) return;
+    const onResize = () => {
+      if (tipActiveRef.current && cursorRef.current) {
+        repositionNameTooltip(tooltipToken.current, cursorRef.current);
+      }
+    };
+    const hide = () => {
+      if (tipActiveRef.current) hideFullNameTip();
+    };
+    window.addEventListener("scroll", hide, { capture: true, passive: true });
+    window.addEventListener("wheel", hide, { capture: true, passive: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("scroll", hide, { capture: true });
+      window.removeEventListener("wheel", hide, { capture: true });
+      window.removeEventListener("resize", onResize);
+    };
+  }, [tipActive, hideFullNameTip]);
+
   return (
     <div>
       <div
         className={`fm-row${isDir ? " fm-row--dir" : ""}${entryTone ? ` fm-row--${entryTone}` : ""}`}
         onClick={handleToggle}
         draggable
+        onMouseDown={hideFullNameTip}
+        onMouseEnter={scheduleFullNameTip}
+        onMouseMove={trackCursor}
+        onMouseLeave={hideFullNameTip}
         onDragStart={(e) => {
+          hideFullNameTip();
           e.dataTransfer.setData(DRAG_MIME, encodeDragPayload(fullPath, entry.kind));
           const mention = buildDragMention(fullPath, entry.kind);
           if (mention !== undefined) e.dataTransfer.setData("text/plain", mention);
@@ -182,7 +274,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
             <span className="fm-file-icon-fold" />
           </span>
         )}
-        <span className="fm-row-name">{entry.name}</span>
+        <span ref={nameRef} className="fm-row-name">{entry.name}</span>
         {(showFolderIndicator || showFileIndicator) && (
           <span
             className={`fm-git-badge fm-git-badge--${entryTone ?? "changed"}${isDir ? " fm-git-badge--dir" : ""}`}
