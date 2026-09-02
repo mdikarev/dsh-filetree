@@ -12,7 +12,7 @@
 
 | # | Phase | Why | Dependencies | Status |
 |---|-------|-----|--------------|--------|
-| 1 | **H-lite** — release hygiene | LICENSE, npm metadata, `typecheck` script (+ typescript devDep), `prepack: build`, CI (test + typecheck + build), CHANGELOG | none | ☐ |
+| 1 | **H-lite** — release hygiene | LICENSE, npm metadata, `typecheck` script (+ typescript devDep), `prepack: build`, CI (test + typecheck + build), CHANGELOG | none | ☑ (commit `3fd8e21`) |
 | 2 | **E-lite** — dsh compat declaration | verify against current dsh rc; README "tested with" line; full version-matrix smoke moves behind CI (later) | H-lite (CI) | ☐ |
 | 3 | **A** — performance on large repos | git-status cache invalidated by git-changed events; consolidate per-folder fs-watchers into one root watcher + filtering | none (design first — own spec) | ☐ |
 | 4 | **B** — live-refresh resilience | anti-race on workspace switch (generation token), reconnect policy, guarded double-subscribe, transition tests | none (own spec/plan) | ☐ |
