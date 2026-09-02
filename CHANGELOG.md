@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Live refresh detects a stalled SSE connection (server heartbeat +
+  client inactivity watchdog) and degrades to polling with a banner
+- Panel keeps one live-refresh coordinator per open panel and switches
+  workspaces via setHint, so polling always targets the current workspace
 - Server caches the workspace git-status snapshot (TTL + event
   invalidation); bursts of refresh listings now share a single git run
 - Typecheck now runs in CI (7 latent type errors fixed); `npm pack` always
