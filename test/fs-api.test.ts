@@ -1,12 +1,13 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert";
-import { mkdtemp, rm, mkdir, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createHandler } from "../src/fs-api.js";
+import { createGitStatusCache } from "../src/git-status-cache.js";
+import { createHandler, debugCollectStatuses } from "../src/fs-api.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,7 +43,17 @@ describe("fs-api", () => {
 
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "fs-api-test-"));
-    handler = createHandler(tempDir);
+    // Always-fresh cache (ttlMs 0) keeps this suite's base uncached-fresh
+    // semantics deterministic: its shared fixture mutates between requests,
+    // which the production 2s-TTL default cache would otherwise staleness-
+    // mask within the TTL window. Caching behavior itself is covered by the
+    // "git-status cache integration" describe below.
+    handler = createHandler(tempDir, {
+      gitStatusCache: createGitStatusCache({
+        ttlMs: 0,
+        collect: (root) => debugCollectStatuses(root),
+      }),
+    });
   });
 
   after(async () => {
@@ -219,5 +230,71 @@ describe("fs-api", () => {
         await rm(outsideDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe("git-status cache integration", () => {
+  let tempDir: string;
+  let canonical: string; // realpath of tempDir: cache keys are realpath'd
+  let handler: ReturnType<typeof createHandler>;
+  let collectCount: number;
+  let invalidateRoot: (root: string) => void;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "fs-api-cache-"));
+    canonical = await realpath(tempDir); // macOS: /var -> /private/var etc.
+    await writeFile(join(tempDir, "tracked.txt"), "one");
+    await execFileAsync("git", ["init"], { cwd: tempDir });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+    await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+    await execFileAsync("git", ["add", "tracked.txt"], { cwd: tempDir });
+    await execFileAsync("git", ["commit", "-m", "init"], { cwd: tempDir });
+
+    collectCount = 0;
+    // fullCache keeps the real SnapshotCache<GitEntry> type for the
+    // handler option; invalidateRoot is a narrow alias for assertions.
+    const fullCache = createGitStatusCache({
+      ttlMs: 60_000, // isolate TTL: only invalidation may trigger a rerun
+      collect: async (root: string) => {
+        collectCount += 1;
+        return debugCollectStatuses(root);
+      },
+    });
+    invalidateRoot = (root: string) => fullCache.invalidate(root);
+    handler = createHandler(tempDir, { gitStatusCache: fullCache });
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("shares one git run across a burst of listings", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      const { status } = await request(
+        handler,
+        "/filemanager-fs/list?hint=" + encodeURIComponent(tempDir) + "&path=",
+        { "x-dsh-filemanager": "1" }
+      );
+      assert.strictEqual(status, 200);
+    }
+    assert.strictEqual(collectCount, 1);
+  });
+
+  it("recomputes after invalidate and reflects a new untracked file", async () => {
+    await writeFile(join(tempDir, "fresh.txt"), "new");
+    invalidateRoot(canonical);
+    const { status, body } = await request(
+      handler,
+      "/filemanager-fs/list?hint=" + encodeURIComponent(tempDir) + "&path=",
+      { "x-dsh-filemanager": "1" }
+    );
+    assert.strictEqual(status, 200);
+    assert.strictEqual(collectCount, 2);
+    const names = ((body as any).entries as Array<{ name: string }>).map((e) => e.name);
+    assert.ok(names.includes("fresh.txt"), "new file must appear after invalidation");
+    const fresh = ((body as any).entries as Array<{ name: string; gitStatus?: string }>).find(
+      (e) => e.name === "fresh.txt"
+    );
+    assert.strictEqual(fresh?.gitStatus, "untracked");
   });
 });

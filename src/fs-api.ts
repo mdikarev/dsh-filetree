@@ -1,6 +1,7 @@
 import { readdir, stat, realpath, lstat, open } from "node:fs/promises";
 import { resolve, sep, basename, join } from "node:path";
 import { createEventsHandler } from "./fs-events.js";
+import { createGitStatusCache, type SnapshotCache } from "./git-status-cache.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 
@@ -10,6 +11,13 @@ type GitEntry = {
   status: GitStatus;
   isDir: boolean;
 };
+
+export type GitStatusCache = SnapshotCache<GitEntry>;
+
+export interface CreateHandlerOptions {
+  /** Override the per-handler git-status cache (tests inject spies). */
+  gitStatusCache?: GitStatusCache;
+}
 
 const HIDDEN_SYSTEM = new Set([".git"]);
 const MAX_ENTRIES = 2000;
@@ -269,7 +277,10 @@ function getEntryStatuses(
   };
 }
 
-export function createHandler(defaultRoot: string) {
+export function createHandler(defaultRoot: string, options: CreateHandlerOptions = {}) {
+  const gitCache =
+    options.gitStatusCache ??
+    createGitStatusCache<GitEntry>({ collect: runGitStatus });
   const eventsHandler = createEventsHandler(defaultRoot);
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
@@ -310,7 +321,7 @@ export function createHandler(defaultRoot: string) {
             return send(res, 400, { error: "not a directory" });
           }
 
-          const gitMap = await runGitStatus(root);
+          const gitMap = await gitCache.get(root);
           const dirents = await readdir(realTarget, { withFileTypes: true });
           const entries: Array<{ name: string; kind: string; size?: number; gitStatus?: GitStatus; gitStatusSummary?: GitStatus[] }> = [];
 
