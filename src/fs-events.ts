@@ -166,7 +166,10 @@ export function normalizeFsEvent(
  * streams normalized "event: changed" blocks, and releases all watchers on
  * response close or error.
  */
-export function createEventsHandler(defaultRoot: string) {
+export function createEventsHandler(
+  defaultRoot: string,
+  gitCache?: { invalidate(root: string): void }
+) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const watchers = new Set<FSWatcher>();
     const gitWatchers = new Set<FSWatcher>();
@@ -227,6 +230,7 @@ export function createEventsHandler(defaultRoot: string) {
 
       const emitGitChanged = (): void => {
         if (disposed) return;
+        gitCache?.invalidate(root);
         try {
           res.write('event: git-changed\ndata: ' + JSON.stringify({ type: "git-changed" }) + '\n\n');
         } catch {
@@ -333,6 +337,7 @@ export function createEventsHandler(defaultRoot: string) {
             if (disposed) return;
             const norm = normalizeFsEvent(root, target, filename as string | Buffer, eventType as FsEventKind);
             if (!norm) return;
+            gitCache?.invalidate(root);
             try {
               res.write("event: changed\ndata: " + JSON.stringify(norm) + "\n\n");
             } catch {

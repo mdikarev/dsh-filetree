@@ -281,7 +281,7 @@ export function createHandler(defaultRoot: string, options: CreateHandlerOptions
   const gitCache =
     options.gitStatusCache ??
     createGitStatusCache<GitEntry>({ collect: runGitStatus });
-  const eventsHandler = createEventsHandler(defaultRoot);
+  const eventsHandler = createEventsHandler(defaultRoot, gitCache);
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       if (req.headers["x-dsh-filemanager"] !== "1") {

@@ -677,3 +677,85 @@ describe("fs events", () => {
   });
 
 });
+
+describe("git-status cache invalidation", () => {
+  let tempDir: string;
+  let invalidated: string[];
+  let handler: Handler;
+
+  before(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "fs-events-cache-"));
+    await writeFile(join(tempDir, "tracked.txt"), "one");
+    execFileSync("git", ["init"], { cwd: tempDir });
+    execFileSync("git", ["config", "user.email", "t@e.c"], { cwd: tempDir });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: tempDir });
+    execFileSync("git", ["add", "tracked.txt"], { cwd: tempDir });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: tempDir });
+
+    invalidated = [];
+    // The events handler only needs the invalidate half of the cache;
+    // use the handler directly (openSse already targets the events URL).
+    handler = createEventsHandler(tempDir, {
+      invalidate: (root: string) => {
+        invalidated.push(root);
+      },
+    });
+  });
+
+  after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("invalidates on a git metadata change (commit)", async () => {
+    const conn = await openSse(handler, "hint=" + encodeURIComponent(tempDir) + "&paths=%5B%5D");
+    try {
+      // The git metadata watchers start after the SSE headers are flushed, so
+      // wait for them before mutating the repo (same pattern as the
+      // git-changed tests): a commit racing watcher registration would be
+      // missed entirely and invalidated would stay empty.
+      await waitFor(() => activeGitWatchCount() >= 1, { message: "git metadata watcher created" });
+      await writeFile(join(tempDir, "tracked.txt"), "two");
+      execFileSync("git", ["add", "tracked.txt"], { cwd: tempDir });
+      execFileSync("git", ["commit", "-m", "second"], { cwd: tempDir });
+      await waitFor(() => invalidated.length >= 1, { message: "git change did not invalidate" });
+    } finally {
+      await conn.close();
+    }
+  });
+
+  it("invalidates on a workspace fs change", async () => {
+    // Watch the workspace root: paths=[""] — an empty paths array (paths=[])
+    // creates NO workspace watcher (parseWatchedPaths returns []), so a file
+    // write could never reach the invalidate call below.
+    const conn = await openSse(
+      handler,
+      "hint=" + encodeURIComponent(tempDir) + "&paths=" + encodeURIComponent(JSON.stringify([""]))
+    );
+    try {
+      await waitFor(() => activeWatchCount() === 1, { message: "root watcher created" });
+      const before = invalidated.length;
+      // macOS FSEvents can drop a single watch notification under parallel
+      // load (see expectChangeEvent), so write a fresh file per attempt.
+      const MAX_ATTEMPTS = 5;
+      const failures: string[] = [];
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        const name = attempt === 1 ? "note.txt" : "note-" + attempt + ".txt";
+        await writeFile(join(tempDir, name), "hello");
+        try {
+          await waitFor(() => invalidated.length > before, {
+            timeoutMs: 5000,
+            message: "fs change did not invalidate",
+          });
+          return;
+        } catch (err) {
+          failures.push(String((err as Error).message));
+        }
+      }
+      throw new Error(
+        "fs change did not invalidate after " + MAX_ATTEMPTS + " attempts: " + failures.join(" | ")
+      );
+    } finally {
+      await conn.close();
+    }
+  });
+});
