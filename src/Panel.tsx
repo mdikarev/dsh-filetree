@@ -540,7 +540,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             {!previewLoading && !previewError && previewPresentation.kind !== "rendered" && (
               <pre className={previewPresentation.kind === "highlighted-source" ? "fm-modal-pre fm-modal-pre--highlighted" : "fm-modal-pre"} dangerouslySetInnerHTML={previewPresentation.html ? { __html: previewPresentation.html } : undefined}>{previewPresentation.html ? undefined : previewPresentation.content}</pre>
             )}
-            {!previewLoading && !previewError && previewPresentation.error && (
+            {!previewLoading && !previewError && previewPresentation.kind !== "rendered" && previewPresentation.error && (
               <div className="fm-preview-render-error">Предпросмотр недоступен: {previewPresentation.error}</div>
             )}
             {!previewLoading && !previewError && previewPresentation.kind === "rendered" && previewPresentation.unavailableLocalImages > 0 && (

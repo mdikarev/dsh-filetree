@@ -37,12 +37,14 @@ export function workspaceResourceUrl(hint: string, markdownPath: string, resourc
   return READ_PATH + "?" + new URLSearchParams({ hint, path: combined }).toString();
 }
 
+const NAMED_TEXT_ENTITIES: Record<string, string> = { colon: ":", tab: "\t", newline: "\n" };
+
 function decodeHtmlEntities(value: string): string {
   return value.replace(/&amp;/gi, "&").replace(/&(?:#x([0-9a-f]+)|#([0-9]+));?/gi, (_match, hex, decimal) => {
     const code = Number.parseInt(hex ?? decimal, hex ? 16 : 10);
     const valid = Number.isInteger(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff);
     return valid ? String.fromCodePoint(code) : _match;
-  }).replace(/&(colon|tab|newline);/gi, (_match, name) => ({ colon: ":", tab: "\t", newline: "\n" }[name.toLowerCase()] ?? _match));
+  }).replace(/&(colon|tab|newline);/gi, (_match, name) => NAMED_TEXT_ENTITIES[name.toLowerCase()] ?? _match);
 }
 function fallbackSanitize(html: string): string {
   const dangerous = (value: string): boolean => {
@@ -67,7 +69,9 @@ function sanitize(html: string): string {
 export function renderMarkdown(source: string, options: MarkdownRenderOptions): MarkdownRenderResult {
   let blockedExternalImages = 0;
   let unavailableLocalImages = 0;
-  let html = marked.parse(source, { gfm: true, breaks: false, html: false }) as string;
+  // marked has no html:false option (the old flag was a no-op); raw HTML
+  // that passes through is handled by sanitize() below.
+  let html = marked.parse(source, { gfm: true, breaks: false }) as string;
   html = html.replace(/<img\b([^>]*?)\bsrc=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, src, after) => {
     if (isExternalUrl(src) || isUnsafeUrl(src)) { blockedExternalImages += 1; return ""; }
     unavailableLocalImages += 1;

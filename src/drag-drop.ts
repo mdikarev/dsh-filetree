@@ -193,7 +193,8 @@ export function installDragDropListeners(handlers: DragDropHandlers): () => void
   };
 
   const onDragLeave = (ev: Event): void => {
-    if (handlers.mentionOf((ev as DragEvent).dataTransfer) !== undefined) clearHint();
+    const dt = (ev as DragEvent).dataTransfer;
+    if (dt && handlers.mentionOf(dt) !== undefined) clearHint();
   };
 
   const onDragEnd = (): void => clearHint();

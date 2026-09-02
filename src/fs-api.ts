@@ -140,10 +140,10 @@ function findInheritedIgnored(gitMap: Map<string, GitEntry>, normalized: string)
     // Если нашли явную запись с ignored - наследуем
     if (entry?.status === "ignored") return true;
     
-    // ВАЖНО: если нашли явную запись с другим статусом (не ignored),
-    // то даже если выше есть ignored предки, мы НЕ наследуем,
-    // потому что эта папка - исключение (negated pattern)
-    if (entry && entry.status !== "ignored") return false;
+    // ВАЖНО: если нашли явную запись с другим статусом (не ignored —
+    // ignored уже вернул true выше), то даже если есть ignored предки,
+    // мы НЕ наследуем, потому что эта папка - исключение (negated pattern)
+    if (entry) return false;
   }
   return false;
 }
@@ -243,7 +243,7 @@ function getEntryStatuses(
   if (!isDir && effectiveDirect) {
     // Файл - добавляем его статус
     descendantStatuses.add(effectiveDirect.status);
-  } else if (isDir && (direct || directDir)) {
+  } else if (isDir && (direct || directDir) && effectiveDirect) {
     // Папка с явным статусом в gitMap - добавляем
     descendantStatuses.add(effectiveDirect.status);
   }
