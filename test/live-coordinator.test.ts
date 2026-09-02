@@ -321,6 +321,60 @@ describe("live refresh coordinator", () => {
       coordinator.stop();
     });
 
+    it("workspace switch: expanded re-sync before setHint keeps the new source on the new hint and the new dirs", () => {
+      // Per-workspace persistence seeds independent expanded sets: A has
+      // "src" expanded, B has "test" expanded.
+      const values = new Map<string, string>();
+      values.set("dsh-filemanager-expanded:/ws/a", JSON.stringify(["src"]));
+      values.set("dsh-filemanager-expanded:/ws/b", JSON.stringify(["test"]));
+      (globalThis as any).localStorage = {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => { values.set(key, value); },
+        removeItem: (key: string) => { values.delete(key); },
+      };
+      const store = createStore();
+      store.setWorkspace("/ws/a");
+
+      const urls: string[] = [];
+      const coordinator = createLiveRefreshCoordinator({
+        hint: "/ws/a",
+        getExpandedPaths: store.getExpandedPaths,
+        subscribeExpandedPaths: store.subscribeExpandedPaths,
+        refreshDirs: () => {},
+        createEventSource: (url) => { urls.push(url); return new FakeEventSource(); },
+      });
+      coordinator.start();
+      assert.equal(urls.length, 1);
+      assert.deepStrictEqual(
+        JSON.parse(new URLSearchParams(urls[0].split("?")[1]).get("paths") ?? ""),
+        ["", "src"]
+      );
+
+      // Panel effect order on a hint change with the panel open: the
+      // store.setWorkspace effect runs first (it must notify expanded
+      // subscribers so the coordinator re-reads the new workspace's set),
+      // then the setHint effect re-points the URL at the new hint.
+      store.setWorkspace("/ws/b");
+      coordinator.setHint("/ws/b");
+
+      const last = new URLSearchParams(urls[urls.length - 1].split("?")[1]);
+      assert.equal(last.get("hint"), "/ws/b", "final source is keyed by the new workspace");
+      assert.deepStrictEqual(
+        JSON.parse(last.get("paths") ?? ""),
+        ["", "test"],
+        "final source watches the new workspace's expanded dirs, not the previous ones"
+      );
+      for (const url of urls) {
+        const params = new URLSearchParams(url.split("?")[1]);
+        const paths = JSON.parse(params.get("paths") ?? "[]");
+        assert.ok(
+          !(params.get("hint") === "/ws/b" && paths.includes("src")),
+          "no source ever pairs the new hint with the previous workspace's expanded dirs"
+        );
+      }
+      coordinator.stop();
+    });
+
     it("start is idempotent: no duplicate subscriptions or sources", () => {
       const { harness, coordinator } = makeHarness();
       coordinator.start();

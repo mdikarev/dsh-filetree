@@ -235,6 +235,11 @@ export function createStore(): FileManagerStore {
         previewLayout,
         previewMode
       };
+      // The expanded set belongs to the workspace: switching workspaces
+      // replaces it, so expanded-path subscribers (the live-refresh
+      // coordinator) must be told to re-read getExpandedPaths or they keep
+      // watching the previous workspace's directories under the new hint.
+      notifyExpanded();
       listeners.forEach((l) => l());
     },
     setPreviewMode: (mode: PreviewMode) => {

@@ -142,6 +142,29 @@ describe("store expanded paths", () => {
     store.togglePath("src");
     assert.deepStrictEqual(JSON.parse(values.get("dsh-filemanager-expanded:/ws") ?? "[]"), ["src"]);
   });
+
+  it("notifies expanded subscribers on a workspace switch so live refresh re-syncs the watched set", () => {
+    const values = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const store = createStore();
+    store.setWorkspace("/ws/a");
+    store.togglePath("src");
+    store.setWorkspace("/ws/b");
+    store.togglePath("test");
+    let notifications = 0;
+    store.subscribeExpandedPaths(() => notifications++);
+    // Switching back to A replaces the expanded set with A's own ("src").
+    store.setWorkspace("/ws/a");
+    assert.deepStrictEqual(store.getExpandedPaths(), ["src"]);
+    assert.strictEqual(notifications, 1, "expanded subscribers must be told the watched set changed");
+    // Switching to the already-active workspace stays a no-op.
+    store.setWorkspace("/ws/a");
+    assert.strictEqual(notifications, 1);
+  });
 });
 
 
