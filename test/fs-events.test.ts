@@ -759,3 +759,22 @@ describe("git-status cache invalidation", () => {
     }
   });
 });
+
+describe("heartbeat", () => {
+  it("emits event: ping blocks at the injected interval while connected", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "fs-events-hb-"));
+    try {
+      const handler = createEventsHandler(tempDir, undefined, { heartbeatMs: 40 });
+      const conn = await openSse(handler, "hint=" + encodeURIComponent(tempDir) + "&paths=%5B%5D");
+      try {
+        await waitFor(() => conn.buffer().includes("event: ping"), {
+          message: "no heartbeat ping received",
+        });
+      } finally {
+        await conn.close();
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

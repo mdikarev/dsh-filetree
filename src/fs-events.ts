@@ -11,6 +11,9 @@ export type FsChangeEvent = {
   kind: FsEventKind;
 };
 
+/** Server heartbeat cadence for live SSE connections (ms). */
+export const SSE_HEARTBEAT_MS = 10000;
+
 const HIDDEN_SYSTEM = new Set([".git"]);
 
 /**
@@ -168,12 +171,15 @@ export function normalizeFsEvent(
  */
 export function createEventsHandler(
   defaultRoot: string,
-  gitCache?: { invalidate(root: string): void }
+  gitCache?: { invalidate(root: string): void },
+  opts?: { heartbeatMs?: number }
 ) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const watchers = new Set<FSWatcher>();
     const gitWatchers = new Set<FSWatcher>();
     let disposed = false;
+    const heartbeatMs = opts?.heartbeatMs ?? SSE_HEARTBEAT_MS;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
     const dispose = (): void => {
       if (disposed) return;
@@ -196,6 +202,10 @@ export function createEventsHandler(
         activeGitWatchers.delete(watcher);
       }
       gitWatchers.clear();
+      if (heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
     };
 
     const cleanupAndEnd = (): void => {
@@ -353,6 +363,15 @@ export function createEventsHandler(
         watchers.add(watcher);
         activeWatchers.add(watcher);
       }
+
+      heartbeatTimer = setInterval(() => {
+        if (disposed) return;
+        try {
+          res.write("event: ping\ndata: {}\n\n");
+        } catch {
+          // connection closing; close/error handlers own cleanup
+        }
+      }, heartbeatMs);
 
       await watchGitMetadata(root);
     } catch (err: any) {
