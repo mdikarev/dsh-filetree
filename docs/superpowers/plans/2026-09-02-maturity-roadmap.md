@@ -16,7 +16,7 @@
 | 2 | **E-lite** — dsh compat declaration | verify against current dsh rc; README "tested with" line; full version-matrix smoke moves behind CI (later) | H-lite (CI) | ☑ (commit `a8ba424`) |
 | 3 | **A** — performance on large repos | git-status snapshot cache (TTL + event invalidation), per-handler instance; watchers stay per-dir (W1) | spec drafted — `docs/superpowers/specs/2026-09-02-git-status-cache-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-git-status-cache.md` |
 | 4 | **B** — live-refresh resilience | watchdog for stalled SSE (server heartbeat + client inactivity) and setHint/poller correctness in Panel | spec drafted — `docs/superpowers/specs/2026-09-02-live-refresh-watchdog-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-live-refresh-watchdog.md` |
-| 5 | **G** — i18n + basic a11y | English default UI (RU preserved) via DSH client locale; tree roles/aria-expanded, keyboard nav, Esc-to-close, focus styles | none | ☐ |
+| 5 | **G** — i18n + basic a11y | plugin-local en/ru i18n (EN default, RU preserved) + L1 a11y (tree semantics/keyboard, preview dialog/Esc, toggle button, focus styles) | spec drafted — `docs/superpowers/specs/2026-09-03-i18n-a11y-design.md` | ☐ |
 | 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☐ |
 
 ## Phase sketches (details per phase in chat)
