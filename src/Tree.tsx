@@ -1,13 +1,15 @@
 // src/Tree.tsx
-import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, type MouseEvent as ReactMouseEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { fetchList, sortEntries, getGitStatusBadge, getDirectoryGitStatus, getEntryGitTone, type Entry, type ListResponse } from "./api.js";
 import { staleExpandedPathsUnder } from "./live-refresh.js";
 import { DRAG_MIME, encodeDragPayload, buildDragMention } from "./drag-drop.js";
 import { showNameTooltip, hideNameTooltip, repositionNameTooltip, type TooltipToken } from "./tooltip.js";
 import type { FileManagerStore } from "./store.js";
 import { useL10n } from "./use-l10n.js";
+import { treeNavStep, type TreeNavKey } from "./tree-nav.js";
 
 interface TreeNodeProps {
+  level: number;
   entry: Entry;
   hint: string;
   path: string;
@@ -33,7 +35,7 @@ export function getFileIconVariant(name: string): FileIconVariant {
   return "default";
 }
 
-function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReload }: TreeNodeProps) {
+function TreeNode({ level, entry, hint, path, onError, onOpenFile, store, registerReload }: TreeNodeProps) {
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState({});
@@ -167,6 +169,22 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
     store.togglePath(fullPath);
   }, [isDir, expanded, children, hint, fullPath, entry.kind, onError, store, applyListing]);
 
+  const handleRowKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const key = e.key;
+    if (key === "Enter" || key === " ") {
+      e.preventDefault();
+      handleToggle();
+      return;
+    }
+    if (isDir && (key === "ArrowRight" || key === "ArrowLeft")) {
+      const wantsExpand = key === "ArrowRight";
+      if ((wantsExpand && !expanded) || (!wantsExpand && expanded)) {
+        e.preventDefault();
+        handleToggle();
+      }
+    }
+  };
+
   // --- Tooltip с полным именем для обрезанных названий -------------------
 
   const cancelPendingTip = useCallback(() => {
@@ -248,7 +266,12 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
     <div>
       <div
         className={`fm-row${isDir ? " fm-row--dir" : ""}${entryTone ? ` fm-row--${entryTone}` : ""}`}
+        role="treeitem"
+        aria-level={level}
+        tabIndex={0}
+        {...(isDir ? { "aria-expanded": expanded } : {})}
         onClick={handleToggle}
+        onKeyDown={handleRowKeyDown}
         draggable
         onMouseDown={hideFullNameTip}
         onMouseEnter={scheduleFullNameTip}
@@ -292,6 +315,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
           {children.map((child) => (
             <TreeNode
               key={child.name}
+              level={level + 1}
               entry={child}
               hint={hint}
               path={fullPath}
@@ -307,6 +331,7 @@ function TreeNode({ entry, hint, path, onError, onOpenFile, store, registerReloa
 }
 
 interface TreeProps {
+  label: string;
   hint: string;
   entries: Entry[];
   onError: (msg: string) => void;
@@ -322,7 +347,7 @@ export interface TreeHandle {
   refreshPaths(paths: string[]): void;
 }
 
-export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entries, onError, onOpenFile, store }, ref) {
+export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ label, hint, entries, onError, onOpenFile, store }, ref) {
   const { t } = useL10n();
   const reloadersRef = useRef<Map<string, () => void>>(new Map());
 
@@ -347,6 +372,19 @@ export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entr
     []
   );
 
+  const handleTreeKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const key = e.key as TreeNavKey;
+    if (key !== "ArrowUp" && key !== "ArrowDown" && key !== "Home" && key !== "End") return;
+    const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(".fm-row"));
+    if (rows.length === 0) return;
+    const current = rows.indexOf(document.activeElement as HTMLElement);
+    const next = treeNavStep(current, rows.length, key);
+    if (next !== null) {
+      e.preventDefault();
+      rows[next].focus();
+    }
+  };
+
   const sorted = sortEntries(entries);
 
   if (sorted.length === 0) {
@@ -354,10 +392,11 @@ export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entr
   }
 
   return (
-    <div className="fm-tree">
+    <div className="fm-tree" role="tree" aria-label={label} onKeyDown={handleTreeKeyDown}>
       {sorted.map((entry) => (
         <TreeNode
           key={entry.name}
+          level={1}
           entry={entry}
           hint={hint}
           path=""

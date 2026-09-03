@@ -311,6 +311,16 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setChangedPreview({ kind: "idle" });
   }, []);
 
+  // Close the preview dialog on Escape while it is open.
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") handleClosePreview();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewOpen, handleClosePreview]);
+
   const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     // Не перетаскиваем, если нажатие пришлось на кнопку (например, ✕)
@@ -505,6 +515,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           {status === "ready" && (
             <Tree
               ref={treeRef}
+              label={rootName || t("filesFallback")}
               hint={hint}
               entries={entries}
               onError={handleError}
@@ -520,6 +531,8 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           className="fm-preview-window"
           ref={previewWindowRef}
           style={previewStyle}
+          role="dialog"
+          aria-label={previewTitle}
         >
           <div
             className="fm-preview-header"

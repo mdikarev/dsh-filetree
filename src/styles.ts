@@ -582,4 +582,17 @@ body[data-ds-dark-theme] {
   border-radius: 10px;
 }
 
+.fm-toggle:focus-visible,
+.fm-row:focus-visible,
+.fm-header-btn:focus-visible,
+.fm-preview-toggle button:focus-visible,
+.fm-preview-close:focus-visible,
+.fm-preview-changed-btn:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+.fm-row:focus-visible {
+  outline-offset: -2px;
+}
+
 `;

@@ -78,7 +78,16 @@ export function ToggleTab({ open, onToggle, onSidebarLeft }: ToggleTabProps) {
       ref={tabRef}
       className="fm-toggle"
       style={{ left: tabLeft, top: verticalOffset }}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
       title={open ? t("closePanel") : t("openFiles")}
     >
       {open ? "◀" : "▶"}
