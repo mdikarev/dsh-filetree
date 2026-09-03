@@ -2,13 +2,13 @@
   "name": "dsh-filetree",
   "version": "0.2.0",
   "description": "Workspace file tree panel for DeepSeek Harness Web GUI",
-  "homepage": "https://github.com/mdikarev/dsh-filemanager",
+  "homepage": "https://github.com/mdikarev/dsh-filetree",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mdikarev/dsh-filemanager.git"
+    "url": "https://github.com/mdikarev/dsh-filetree.git"
   },
   "bugs": {
-    "url": "https://github.com/mdikarev/dsh-filemanager/issues"
+    "url": "https://github.com/mdikarev/dsh-filetree/issues"
   },
   "type": "module",
   "main": "lib/index.js",

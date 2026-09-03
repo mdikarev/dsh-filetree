@@ -2,7 +2,7 @@
 
 Workspace file tree panel for the DeepSeek Harness (DSH) Web GUI — a read-only file explorer with live refresh, git status, and a text/markdown preview.
 
-[![CI](https://github.com/mdikarev/dsh-filemanager/actions/workflows/ci.yml/badge.svg)](https://github.com/mdikarev/dsh-filemanager/actions/workflows/ci.yml)
+[![CI](https://github.com/mdikarev/dsh-filetree/actions/workflows/ci.yml/badge.svg)](https://github.com/mdikarev/dsh-filetree/actions/workflows/ci.yml)
 
 A toggle handle at the sidebar edge opens a 300 px panel showing the directory tree of the current session's workspace. Clicking a file opens a floating dock with its text content. File and folder rows can be dragged into the composer as @-mentions.
 
