@@ -3,24 +3,34 @@
 ## Summary
 Плагин состоит из серверной части (FS API) и клиентской части (UI-компоненты). FS API предоставляет `/filemanager-fs/root`, `/filemanager-fs/list`, `/filemanager-fs/read` для чтения текстовых файлов (до 5 МБ) и SSE-endpoint `/filemanager-fs/events` для живого обновления раскрытых каталогов.
 Клиент реализует дерево файлов, док-панель предпросмотра справа от панели дерева и автообновление дерева через SSE с polling fallback.
+Живое обновление усилено: серверный кэш git-статуса (TTL + инвалидация), SSE-heartbeat и клиентский inactivity-watchdog (зависшее соединение деградирует в polling с баннером). UI локализован (en по умолчанию, ru сохраняется) и имеет базовую доступность (роли дерева, клавиатура, Esc-закрытие предпросмотра) и тултип полного имени для обрезанных строк.
 
 ## System context
 - DSH Web shell: предоставляет слоты и контекст воркспейсов/сессий
 - Рабочая директория воркспейса: границы доступа определены хинтом и проверкой "внутри корня"
 
 ## Building blocks
-- FS API (src/fs-api.ts): обработчик HTTP `createHandler(defaultRoot)` с экшенами `root`, `list`, `read` и новым `events` (SSE).
+- FS API (src/fs-api.ts): обработчик HTTP `createHandler(defaultRoot, options?)` с экшенами `root`, `list`, `read` и `events` (SSE). Опция `gitStatusCache` (тип `GitStatusCache = SnapshotCache<GitEntry>`) позволяет впрыснуть кэш в тестах; по умолчанию создаётся per-handler кэш с коллектором `runGitStatus`. В `list` git-карта берётся через `gitCache.get(root)` (см. кэш ниже), `debugCollectStatuses` остаётся без кэша.
 - События файловой системы (src/fs-events.ts): SSE-endpoint `GET /filemanager-fs/events` — парсинг и валидация `paths`, жизненный цикл `fs.watch` (watcher-ы создаются только после валидации всех путей и освобождаются при disconnect/ошибке соединения),
    нормализация событий в `{ type: "changed", path, kind }` с фильтрацией содержимого `.git`; отдельные watcher-ы на git-метаданные (каталог `.git/` и `.git/refs/heads`, если есть)
-   эмитят событие `{ type: "git-changed" }` при изменении `index`/`HEAD`/refs.
+   эмитят событие `{ type: "git-changed" }` при изменении `index`/`HEAD`/refs. Сигнатура: `createEventsHandler(defaultRoot, gitCache?, opts?: { heartbeatMs? })` — опциональный gitCache
+   инвалидирует кэш git-статуса (см. ниже) на git-метаданные и нормализованные fs-события воркспейса; сервер шлёт heartbeat-блок `event: ping` каждые `SSE_HEARTBEAT_MS` (10 с, инъекция через `opts.heartbeatMs`), интервал гасится в dispose.
+- Кэш git-статуса (src/git-status-cache.ts): generic per-root snapshot cache (`createGitStatusCache<V>({ collect, ttlMs?, maxRoots?, now? })`, `SnapshotCache<V>` с `get/invalidate/stats`); дефолты `DEFAULT_TTL_MS` = 2000 мс и `DEFAULT_MAX_ROOTS` = 8. `get(root)` переиспользует свежий (!dirty и TTL) снапшот, иначе — один общий in-flight прогон; `invalidate` только ставит dirty-флаг; сбой коллектора даёт пустой снапшот с dirty (листинг не падает); LRU-эвикция по lastAccess.
 - API клиент (src/api.ts): функции `fetchRoot`, `fetchList`, `fetchFile` и новая `buildEventsUrl(hint, paths)` — URL-encoding hint и JSON-массива `paths`.
 - Координация живого обновления (src/live-refresh.ts): чистые хелперы `parentDirectory`, `affectedExpandedDirectories`, trailing-edge debounce (250 мс) с объединением по пути, безопасный `parseSseChange` и `createLiveRefreshCoordinator` (один SSE-транспорт, reconnect с backoff, targeted invalidation, polling fallback).
+   Inactivity-watchdog: `LIVE_REFRESH_INACTIVITY_MS` = 30 с (опция `inactivityMs`); активность (open/changed/git-changed/ping) сбрасывает таймер, тишина дольше порога запускает error-путь (closeSource + reconnect + polling + onError). `setHint` останавливает poller и переподключает SSE; события устаревшего источника отбрасываются по epoch.
 - SSE-клиент (src/sse-client.ts): fetch-based SSE-транспорт для `events`-эндпоинта — нативный EventSource не может отправить обязательный security-header `x-dsh-filemanager: 1` и потому всегда получал 403, поэтому клиент стримит тот же фрейминг через `fetch` и зеркалирует минимальную поверхность EventSource (`open`, именованные события, `error`, `close()` через AbortController); reconnect и backoff остаются у координатора.
 - Polling fallback (src/live-polling.ts): стабильные снапшоты раскрытых каталогов (имена/тип/размер/mtime), детекция изменений и опрос раз в 5 секунд через тот же `refreshDirs`.
 - UI (клиент):
-  - ToggleTab (src/ToggleTab.tsx): вертикальная вкладка-ручка 24×64px у правого края сайдбара, по вертикали на 1/3 высоты окна; иконка `▶` (закрыта) / `◀` (открыта), title «Открыть файлы»/«Закрыть панель»; клик открывает/закрывает панель; позиция отслеживает ширину сайдбара (ResizeObserver), при открытой панели вкладка сдвигается к её правому краю.
-  - Panel (src/Panel.tsx): шторка-док 300px слева от контента (z-index 99, слот shell.overlay); шапка с именем корня (или «Файлы») и кнопками ↻ (обновить) и ✕ (закрыть); состояния: загрузка, ошибка («Повторить»), нет воркспейса, готово (дерево);
-    владеет жизненным циклом координатора живого обновления (один SSE-транспорт, polling fallback со статус-баннером) и confirmation banner для изменённого на диске preview.
+  - ToggleTab (src/ToggleTab.tsx): вертикальная вкладка-ручка 24×64px у правого края сайдбара, по вертикали на 1/3 высоты окна; иконка `▶` (закрыта) / `◀` (открыта); семантика кнопки: `role="button"`, `tabIndex 0`, `aria-expanded`, Enter/Space как клик; надписи из локализации (см. i18n); клик открывает/закрывает панель; позиция отслеживает ширину сайдбара (ResizeObserver), при открытой панели вкладка сдвигается к её правому краю.
+  - Panel (src/Panel.tsx): шторка-док 300px слева от контента (z-index 99, слот shell.overlay); шапка с именем корня (или локализованным «Файлы»/Files) и кнопками ↻ (обновить) и ✕ (закрыть); состояния: загрузка, ошибка («Повторить»/Retry), нет воркспейса, готово (дерево);
+    владеет жизненным циклом координатора живого обновления: один coordinator на открытую панель, смена hint уходит через `coordinator.setHint` (зависимые колбэки стабильны, `listDir` читает актуальный hint через ref; `store.setWorkspace` синхронно нотифицирует expanded-подписчиков, чтобы setHint никогда не наблюдал каталоги старого воркспейса); polling fallback со статус-баннером; confirmation banner для изменённого на диске preview.
+    Окно предпросмотра — диалог: `role="dialog"` + `aria-label` с именем файла, закрывается по Escape.
+  - Tree (src/Tree.tsx): дерево каталогов; папки первыми, затем по алфавиту без учёта регистра; ленивая загрузка детей при раскрытии; состояние раскрытия хранится по воркспейсу; клик по файлу открывает предпросмотр;
+    раскрытые каталоги регистрируют reloader для targeted invalidation (`refreshPaths`), при размонтировании узла (например, после удаления каталога) reloader вычищается из реестра.
+    Доступность (L1): контейнер `role="tree"` + `aria-label` (имя корня), строки `role="treeitem"` с `aria-level` и `aria-expanded` у папок, клавиатура (стрелки/Home/End через чистый `treeNavStep` из src/tree-nav.ts, Enter/Space — действие, ArrowRight/Left — раскрытие/сворачивание папки).
+  - Тултип полного имени (src/tooltip.ts): при наведении на строку с обрезанным именем (scrollWidth > clientWidth) через ~400 мс у курсора показывается тематический тултип с полным именем; рендерится на `body` (панель transform/clip режет fixed-потомков), flip у краёв экрана (`computeTooltipPlacement`), скрывается на leave/click/drag/scroll.
+  - Локализация (src/l10n.ts + src/use-l10n.ts): типобезопасные словари en (источник истины, default) и ru (`Record<L10nKey, string>`); `detectLocale(navigatorLanguage, stored)` — localStorage `fm-locale` → ru-subtag → en; store с `setLocale`/`subscribeLocale`/`getLocale` и `attachBrowserLocaleSync` (initBrowserLocale + синхронизация между вкладками); UI-копия берётся через хук `useL10n().t`. По умолчанию в Node — en (детерминизм), браузерная локаль применяется при attach.
   - Tree (src/Tree.tsx): дерево каталогов; папки первыми, затем по алфавиту без учёта регистра; ленивая загрузка детей при раскрытии; состояние раскрытия хранится по воркспейсу; клик по файлу открывает предпросмотр;
     раскрытые каталоги регистрируют reloader для targeted invalidation (`refreshPaths`), при размонтировании узла (например, после удаления каталога) reloader вычищается из реестра.
   - Док-панель предпросмотра (см. Key flows) с перетаскиванием за шапку, ресайзом и прокруткой; клиентская подсветка highlight.js для TypeScript, JavaScript, Python, Go, C# и Rust. Для Markdown-файлов она также предоставляет переключатель режимов «Исходник»/«Предпросмотр» и клиентский безопасный renderer.
@@ -46,9 +56,11 @@
 1. Открытая панель создаёт SSE-подписку `GET /filemanager-fs/events?hint=<workspace>&paths=<url-encoded JSON array>`. `paths` — относительные posix-пути раскрытых каталогов из store; корень workspace (пустая строка `""`) всегда включается в подписку, поэтому верхнеуровневые create/delete/rename обновляют корневой список. Наблюдаются только эти каталоги, не весь workspace.
 2. Сервер требует header `x-dsh-filemanager: 1` и строгий hint: `hint` обязателен и должен быть валидным каталогом, иначе подписка отклоняется (400) — fallback на default root для events отсутствует (в отличие от root/list/read). Затем валидируется каждый путь (`realpath` + `isInside` + каталог, не `.git`) до создания любого watcher.
    Любой некорректный путь отклоняет всю подписку (400/403/404) без единого watcher-а — fallback на подмножество валидных путей не выполняется.
+   Сервер также шлёт heartbeat-блок `event: ping` каждые 10 с (`SSE_HEARTBEAT_MS`), пока соединение живо.
+   Сервер также шлёт heartbeat-блок `event: ping` каждые 10 с (`SSE_HEARTBEAT_MS`), пока соединение живо.
 3. Серверный `fs.watch` регистрируется на каждый провалидированный каталог. Сырые события нормализуются в `{ "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }` и отправляются блоками `event: changed` + `data: <json>`;
-   события за пределами workspace и содержимое `.git` как `changed` не доставляются. Дополнительно сервер наблюдает git-метаданные корня (каталог `.git/` и `.git/refs/heads`, если они есть) и при изменении `index`/`HEAD`/refs отправляет блок `event: git-changed` + `data: { "type": "git-changed" }`. Все watcher-ы соединения (рабочие каталоги и git-метаданные) освобождаются при закрытии/ошибке SSE-ответа (disconnect).
-4. Координатор клиента держит ровно один SSE-транспорт (fetch-based клиент из `src/sse-client.ts`, зеркалирующий поверхность EventSource; нативный EventSource не может отправить обязательный header `x-dsh-filemanager: 1`), ключевой по hint и набору раскрытых путей; смена workspace или набора путей закрывает старое соединение до создания нового; события из устаревшего (старого workspace / перезапущенного) источника отбрасываются.
+   события за пределами workspace и содержимое `.git` как `changed` не доставляются. Дополнительно сервер наблюдает git-метаданные корня (каталог `.git/` и `.git/refs/heads`, если они есть) и при изменении `index`/`HEAD`/refs отправляет блок `event: git-changed` + `data: { "type": "git-changed" }`; git-changed и нормализованные fs-события инвалидируют per-handler кэш git-статуса (следующий листинг пересчитает). Все watcher-ы соединения (рабочие каталоги и git-метаданные) освобождаются при закрытии/ошибке SSE-ответа (disconnect).
+4. Координатор клиента держит ровно один SSE-транспорт (fetch-based клиент из `src/sse-client.ts`, зеркалирующий поверхность EventSource; нативный EventSource не может отправить обязательный header `x-dsh-filemanager: 1`), ключевой по hint и набору раскрытых путей; смена workspace или набора путей закрывает старое соединение до создания нового; события из устаревшего (старого workspace / перезапущенного) источника отбрасываются по epoch; смена hint обрабатывается на том же coordinator через `setHint` без пересоздания. Активность (open/changed/git-changed/ping) сбрасывает inactivity-watchdog (30 с); тишина дольше порога трактуется как сбой: источник закрывается, включаются reconnect с backoff и polling fallback.
 5. События попадают в trailing-edge debounce 250 мс с объединением по пути (повторное событие заменяет kind). После окна батч направляется в targeted invalidation: `fetchList` повторно вызывается только для затронутых раскрытых каталогов (для root-уровневых изменений — корень);
    изменения внутри закрытых каталогов фоновых запросов не вызывают. Раскрытие узлов, состояние предпросмотра и режим Markdown сохраняются. Событие `git-changed` (git-операции: commit/stage/checkout) не попадает в файловый debounce: клиент с тем же trailing-edge окном 250 мс перечитывает ВСЕ наблюдаемые каталоги (корень + раскрытые), чтобы обновить git-бейджи; confirmation banner для preview при этом не триггерится.
 6. Если текущий preview-файл затронут событием, содержимое не перезагружается молча: в панели показывается confirmation banner «Файл изменён на диске» с кнопками «Обновить» и «Оставить текущую версию».
@@ -101,9 +113,9 @@ Query:
 
 Header: `x-dsh-filemanager: 1` обязателен.
 
-Response (200): `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`; каждый normalized event — блок `event: changed` + `data: { "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }`.
-Путь внутри `.git` или за пределами workspace не отправляется. При изменении git-метаданных (`index`/`HEAD`/refs) отправляется блок `event: git-changed` + `data: { "type": "git-changed" }` — клиент перечитывает наблюдаемые каталоги для обновления git-бейджей.
-При disconnect все watcher-ы соединения (рабочие каталоги и git-метаданные) освобождаются.
+Response (200): `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`; каждый normalized event — блок `event: changed` + `data: { "type": "changed", "path": "<отн. posix-путь>", "kind": "rename" | "change" }`; периодически (по умолчанию раз в 10 с) сервер шлёт блок `event: ping` + `data: {}` — heartbeat для клиентского watchdog (старые клиенты игнорируют неизвестное событие).
+Путь внутри `.git` или за пределами workspace не отправляется. При изменении git-метаданных (`index`/`HEAD`/refs) отправляется блок `event: git-changed` + `data: { "type": "git-changed" }` — клиент перечитывает наблюдаемые каталоги для обновления git-бейджей (и сервер инвалидирует кэш git-статуса).
+При disconnect все watcher-ы соединения (рабочие каталоги и git-метаданные) и heartbeat-интервал освобождаются.
 
 Ошибки:
 - 403 `{ error: "missing x-dsh-filemanager header" }`
@@ -142,6 +154,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Ограничение чтения: 5 МБ; `truncated: true` если файл больше
 - Кодировка: UTF-8; при некорректной кодировке — ошибка
 - Живое обновление: debounce 250 мс; polling fallback — раз в 5 секунд; reconnect backoff — 500 мс с удвоением, кап 10 с; git-бейджи: событие `git-changed` при изменении git-метаданных (`index`/`HEAD`/refs), клиент перечитывает наблюдаемые каталоги
+- Серверный кэш git-статуса: TTL 2 с + dirty-инвалидация (git-changed и fs-события), один in-flight прогон на root, LRU 8; heartbeat `event: ping` каждые 10 с; клиентский inactivity-watchdog 30 с (тишина → error-путь с polling и баннером)
 - Watcher-ы освобождаются при disconnect/ошибке SSE-соединения (активных watcher-ов после закрытия — 0)
 
 ## Failure modes / error handling
@@ -160,6 +173,8 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - В корне нет `.git` или `.git` является файлом (linked worktree/submodule) — git-метаданные не наблюдаются, событие `git-changed` не отправляется; это не ошибка соединения, обычные `changed`-события продолжают работать
 - Каталог удалён во время watcher operation — событие обрабатывается без падения; узел исчезает после invalidation родителя, его reloader вычищается из реестра инвалидации
 - Ошибка watcher-а или SSE — клиент закрывает источник, переподключается с backoff и включает polling раскрытых каталогов раз в 5 секунд; успешный reconnect останавливает polling
+- «Зависшее» соединение (нет open/error и нет событий/пингов дольше 30 с) — inactivity-watchdog трактует тишину как сбой: источник закрывается, включаются reconnect с backoff и polling fallback с баннером
+- Сбой сбора git-статуса — кэш возвращает пустой снапшот и помечает root dirty (следующий листинг пересчитает); сам листинг не падает
 - Смена workspace — старые SSE, watcher-ы, debounce и polling останавливаются; создаётся контур нового workspace
 - Несколько быстрых событий — объединяются debounce-окном по пути и дают один refresh
 - Ошибка `fetchList` при invalidation — сохраняется последнее состояние узла и используется существующая ошибка загрузки
@@ -182,6 +197,9 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Соединение восстанавливается после сбоя (reconnect с backoff), polling fallback работает и останавливается при восстановлении SSE, ручной ↻ продолжает работать
 - Git-бейджи обновляются автоматически после git-операций (commit/stage/checkout): сервер шлёт `git-changed` при изменении `index`/`HEAD`/refs, клиент перечитывает раскрытые каталоги; для воркспейса без `.git` событие просто не отправляется
 - При disconnect/закрытии панели watcher-ы, SSE-соединение и таймеры освобождаются (дубликаты подписок не возникают)
+- Несколько листингов в пределах окна кэша (или после git-события) делят один прогон git-статуса; правка файла без git-метаданных обновляет бейдж через инвалидацию кэша
+- Зависший SSE (нет событий дольше 30 с) деградирует в polling со статус-баннером; heartbeat-пинги идут каждые 10 с, пока соединение живо
+- UI-копия локализована (en по умолчанию, ru для ru-браузеров, оверрайд `fm-locale`); дерево доступно с клавиатуры (роли, стрелки/Home/End, Enter/Space, ArrowLeft/Right на папках), превью — диалог с закрытием по Escape; обрезанные имена показывают полный тултип при наведении
 - Перетаскивание строки дерева в поле ввода вставляет упоминание пути в позицию каретки; `@`-упоминание соответствует грамматике DSH (модель трактует его как явно упомянутый файл); папки получают завершающий `/`
 
 ## Related canon
@@ -202,5 +220,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - UI: док-панель справа с возможностью ресайза, прокруткой и перетаскиванием за шапку; моноширинный шрифт для текста
 - Позиция и размер панели предпросмотра запоминаются в localStorage в рамках воркспейса (ключ по hint, как для развёрнутых папок); при открытии файла панель восстанавливает сохранённое расположение, иначе — правый край
 - Живое обновление: серверный `fs.watch` на раскрытые каталоги, доставка SSE (`event: changed`), debounce 250 мс, targeted invalidation, reconnect с backoff (500 мс → кап 10 с), polling fallback раз в 5 секунд (снапшоты имён/типа/размера/mtime)
+- Кэш git-статуса: `DEFAULT_TTL_MS` 2000 мс, `DEFAULT_MAX_ROOTS` 8, dirty-инвалидация событиями; heartbeat: `SSE_HEARTBEAT_MS` 10000 мс; watchdog: `LIVE_REFRESH_INACTIVITY_MS` 30000 мс
+- UI: локализация en/ru (`fm-locale`), доступность L1 (роли дерева/aria, клавиатура, dialog+Esc, focus-visible), тултип полного имени у обрезанных строк
 - События вне workspace и из `.git` не отправляются; пути нормализуются в относительные posix-пути; корень workspace в подписке — пустая строка `""`
 - Drag-and-drop: кастомный MIME `application/x-dsh-filemanager`, target-детекция по `[data-composer-card]`, вставка через `conversation.input.shell(sessionId).setDraft` с editRange; текст упоминания — грамматика `@`-токенов (`@path`, `@path/`, `@"path"`)
