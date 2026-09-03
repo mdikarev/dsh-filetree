@@ -1,6 +1,6 @@
 {
   "name": "dsh-filemanager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Workspace file tree panel for DeepSeek Harness Web GUI",
   "homepage": "https://github.com/mdikarev/dsh-filemanager",
   "repository": {
