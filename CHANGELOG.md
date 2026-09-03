@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invalidation); bursts of refresh listings now share a single git run
 - Typecheck now runs in CI (7 latent type errors fixed); `npm pack` always
   builds `lib/` first via the prepack script
+- UI is localized: English default with Russian preserved (auto-selected
+  for ru-locale browsers; override via fm-locale)
+- Basic accessibility: tree semantics + keyboard navigation (arrows,
+  Home/End, Enter/Space, ArrowLeft/Right on folders), preview dialog
+  closes on Escape, toggle handle is a button, focus-visible styles
 
 ### Security
 
