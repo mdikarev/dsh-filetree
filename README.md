@@ -42,7 +42,7 @@ All requests require the `x-dsh-filemanager: 1` header. Paths are contained to t
 
 ## Installation
 
-### From npm (requires an npm registry release — currently tagged v0.2.0, publication may trail the git tag)
+### From npm
 
 ```bash
 dsh plugin --profile web add dsh-filetree
