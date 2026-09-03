@@ -5,6 +5,7 @@ import { staleExpandedPathsUnder } from "./live-refresh.js";
 import { DRAG_MIME, encodeDragPayload, buildDragMention } from "./drag-drop.js";
 import { showNameTooltip, hideNameTooltip, repositionNameTooltip, type TooltipToken } from "./tooltip.js";
 import type { FileManagerStore } from "./store.js";
+import { useL10n } from "./use-l10n.js";
 
 interface TreeNodeProps {
   entry: Entry;
@@ -322,6 +323,7 @@ export interface TreeHandle {
 }
 
 export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entries, onError, onOpenFile, store }, ref) {
+  const { t } = useL10n();
   const reloadersRef = useRef<Map<string, () => void>>(new Map());
 
   const registerReload = useCallback((path: string, reload: (() => void) | null) => {
@@ -348,7 +350,7 @@ export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ hint, entr
   const sorted = sortEntries(entries);
 
   if (sorted.length === 0) {
-    return <div className="fm-empty">Пустая папка</div>;
+    return <div className="fm-empty">{t("emptyFolder")}</div>;
   }
 
   return (

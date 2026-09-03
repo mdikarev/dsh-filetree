@@ -1,5 +1,6 @@
 // src/ToggleTab.tsx
 import { useRef, useEffect, useState, useCallback } from "react";
+import { useL10n } from "./use-l10n.js";
 
 interface ToggleTabProps {
   open: boolean;
@@ -8,6 +9,7 @@ interface ToggleTabProps {
 }
 
 export function ToggleTab({ open, onToggle, onSidebarLeft }: ToggleTabProps) {
+  const { t } = useL10n();
   const [left, setLeft] = useState(0);
   const tabRef = useRef<HTMLDivElement>(null);
 
@@ -77,7 +79,7 @@ export function ToggleTab({ open, onToggle, onSidebarLeft }: ToggleTabProps) {
       className="fm-toggle"
       style={{ left: tabLeft, top: verticalOffset }}
       onClick={onToggle}
-      title={open ? "Закрыть панель" : "Открыть файлы"}
+      title={open ? t("closePanel") : t("openFiles")}
     >
       {open ? "◀" : "▶"}
     </div>

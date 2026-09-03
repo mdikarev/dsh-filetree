@@ -9,6 +9,7 @@ import { Tree, type TreeHandle } from "./Tree.js";
 import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
 import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
+import { useL10n } from "./use-l10n.js";
 
 interface PanelProps {
   open: boolean;
@@ -91,6 +92,7 @@ export function clearChangedPreview(): ChangedPreviewState {
 }
 
 export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
+  const { t } = useL10n();
   const treeRef = useRef<TreeHandle | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [rootName, setRootName] = useState("");
@@ -454,35 +456,35 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
         <div className={`fm-panel${open ? " fm-panel--open" : ""}`}>
           <div className="fm-header">
             <span className="fm-header-title" title={rootPath}>
-              {rootName || "Файлы"}
+              {rootName || t("filesFallback")}
             </span>
             <button
               className="fm-header-btn"
               onClick={handleRefresh}
-              title="Обновить"
+              title={t("refresh")}
             >
               ↻
             </button>
-            <button className="fm-header-btn" onClick={onClose} title="Закрыть">
+            <button className="fm-header-btn" onClick={onClose} title={t("close")}>
               ✕
             </button>
           </div>
 
           {status === "loading" && (
             <div className="fm-loading">
-              <span className="fm-spinner" /> Загрузка…
+              <span className="fm-spinner" /> {t("loading")}
             </div>
           )}
 
           {status === "error" && (
             <div className="fm-error">
-              <div>Ошибка: {error}</div>
-              <button onClick={handleRefresh}>Повторить</button>
+              <div>{t("errorPrefix")}{error}</div>
+              <button onClick={handleRefresh}>{t("retry")}</button>
             </div>
           )}
 
           {status === "no-workspace" && (
-            <div className="fm-empty">Нет воркспейса</div>
+            <div className="fm-empty">{t("noWorkspace")}</div>
           )}
 
           {liveFallback && (
@@ -496,7 +498,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
                 fontSize: "12px",
               }}
             >
-              Автообновление: опрос каталогов (SSE недоступен)
+              {t("liveFallback")}
             </div>
           )}
 
@@ -528,36 +530,36 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           >
             <span className="fm-preview-title">{previewTitle}</span>
             {markdownFile && (
-              <div className="fm-preview-toggle" role="group" aria-label="Режим Markdown">
-                <button type="button" className={previewMode === "source" ? "is-active" : ""} aria-pressed={previewMode === "source"} onClick={() => store.setPreviewMode("source")}>Исходник</button>
-                <button type="button" className={previewMode === "rendered" ? "is-active" : ""} aria-pressed={previewMode === "rendered"} onClick={() => store.setPreviewMode("rendered")}>Предпросмотр</button>
+              <div className="fm-preview-toggle" role="group" aria-label={t("markdownMode")}>
+                <button type="button" className={previewMode === "source" ? "is-active" : ""} aria-pressed={previewMode === "source"} onClick={() => store.setPreviewMode("source")}>{t("sourceMode")}</button>
+                <button type="button" className={previewMode === "rendered" ? "is-active" : ""} aria-pressed={previewMode === "rendered"} onClick={() => store.setPreviewMode("rendered")}>{t("renderedMode")}</button>
               </div>
             )}
             <button
               className="fm-preview-close"
               onClick={handleClosePreview}
-              title="Закрыть"
+              title={t("close")}
             >
               ✕
             </button>
           </div>
           {changedPreview.kind === "changed" && (
             <div role="alert" className="fm-preview-changed">
-              <span className="fm-preview-changed-text">Файл изменён на диске</span>
+              <span className="fm-preview-changed-text">{t("fileChanged")}</span>
               <span className="fm-preview-changed-actions">
                 <button
                   type="button"
                   className="fm-preview-changed-btn fm-preview-changed-btn--primary"
                   onClick={handleRefreshChangedPreview}
                 >
-                  Обновить
+                  {t("update")}
                 </button>
                 <button
                   type="button"
                   className="fm-preview-changed-btn"
                   onClick={handleDismissChangedPreview}
                 >
-                  Оставить текущую версию
+                  {t("keepCurrent")}
                 </button>
               </span>
             </div>
@@ -565,11 +567,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           <div className="fm-preview-body">
             {previewLoading && (
               <div className="fm-loading">
-                <span className="fm-spinner" /> Загрузка…
+                <span className="fm-spinner" /> {t("loading")}
               </div>
             )}
             {!previewLoading && previewError && (
-              <div className="fm-error">Ошибка: {previewError}</div>
+              <div className="fm-error">{t("errorPrefix")}{previewError}</div>
             )}
             {!previewLoading && !previewError && previewPresentation.kind === "rendered" && (
               <div className="fm-markdown-content" dangerouslySetInnerHTML={{ __html: previewPresentation.html }} />
@@ -578,13 +580,13 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               <pre className={previewPresentation.kind === "highlighted-source" ? "fm-modal-pre fm-modal-pre--highlighted" : "fm-modal-pre"} dangerouslySetInnerHTML={previewPresentation.html ? { __html: previewPresentation.html } : undefined}>{previewPresentation.html ? undefined : previewPresentation.content}</pre>
             )}
             {!previewLoading && !previewError && previewPresentation.kind !== "rendered" && previewPresentation.error && (
-              <div className="fm-preview-render-error">Предпросмотр недоступен: {previewPresentation.error}</div>
+              <div className="fm-preview-render-error">{t("previewUnavailablePrefix")}{previewPresentation.error}</div>
             )}
             {!previewLoading && !previewError && previewPresentation.kind === "rendered" && previewPresentation.unavailableLocalImages > 0 && (
-              <div className="fm-preview-warning" role="status">Локальные изображения недоступны в предпросмотре.</div>
+              <div className="fm-preview-warning" role="status">{t("localImagesUnavailable")}</div>
             )}
             {!previewLoading && previewTruncated && (
-              <div className="fm-preview-warning" role="status">Файл усечён до 5 МБ; показано не всё содержимое.</div>
+              <div className="fm-preview-warning" role="status">{t("fileTruncated")}</div>
             )}
           </div>
         </div>

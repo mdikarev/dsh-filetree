@@ -4,6 +4,7 @@ import { CSS_STRING } from "./styles.js";
 import { createStore, toggle, close, type FileManagerStore } from "./store.js";
 import { ToggleTab } from "./ToggleTab.js";
 import { Panel } from "./Panel.js";
+import { attachBrowserLocaleSync } from "./l10n.js";
 
 // Services this client plugin depends on; the loader derives the plugin
 // fiber's injection list from this module's `inject` export (package.json's
@@ -148,6 +149,9 @@ function FileManager({ workspaces, sessions }: any) {
 export function apply(ctx: any): void {
   // Inject CSS
   injectCss(CSS_STRING);
+
+  // Keep the locale in sync across tabs (fm-locale storage events).
+  attachBrowserLocaleSync();
 
   // Drag-and-drop of tree rows into the composer: only our custom MIME and a
   // drop target inside the composer card trigger anything; OS file drags and
