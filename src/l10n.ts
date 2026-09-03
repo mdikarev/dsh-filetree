@@ -4,6 +4,9 @@
 // ships only zh/en locales, so the plugin cannot rely on it for Russian.
 // Pure module: no top-level browser access (Node-test safe). React lives
 // in src/use-l10n.ts.
+// The module-level default is always "en" (deterministic, Node-test safe);
+// the browser locale is applied explicitly from storage/navigator via
+// initBrowserLocale(), which attachBrowserLocaleSync() calls on attach.
 
 export type Locale = "en" | "ru";
 
@@ -84,7 +87,11 @@ function navigatorLanguage(): string {
   }
 }
 
-let currentLocale: Locale = detectLocale(navigatorLanguage(), readStored());
+// Deterministic default: in Node >= 21, navigator.language reflects LANG, so
+// reading it at import time would load the module as "ru" on ru-locale machines
+// and make tests env-sensitive. The browser locale is applied later via
+// initBrowserLocale().
+let currentLocale: Locale = "en";
 const listeners = new Set<() => void>();
 
 export function getLocale(): Locale {
@@ -109,12 +116,22 @@ export function subscribeLocale(listener: () => void): () => void {
   };
 }
 
+export function initBrowserLocale(): Locale {
+  const locale = detectLocale(navigatorLanguage(), readStored());
+  if (locale !== currentLocale) {
+    currentLocale = locale;
+    for (const listener of [...listeners]) listener();
+  }
+  return locale;
+}
+
 export function t(key: L10nKey): string {
   return getMessage(currentLocale, key);
 }
 
 export function attachBrowserLocaleSync(): void {
   if (typeof window === "undefined") return;
+  initBrowserLocale();
   window.addEventListener("storage", (event) => {
     if (event.key !== LOCALE_STORAGE_KEY) return;
     const next = detectLocale(navigatorLanguage(), event.newValue);
