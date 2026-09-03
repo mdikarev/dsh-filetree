@@ -1,0 +1,126 @@
+// src/l10n.ts
+// Plugin-local minimal i18n: en is the default and the source of truth;
+// ru is preserved and auto-selected for ru-locale browsers. The DSH host
+// ships only zh/en locales, so the plugin cannot rely on it for Russian.
+// Pure module: no top-level browser access (Node-test safe). React lives
+// in src/use-l10n.ts.
+
+export type Locale = "en" | "ru";
+
+export const LOCALE_STORAGE_KEY = "fm-locale";
+
+const en = {
+  filesFallback: "Files",
+  refresh: "Refresh",
+  close: "Close",
+  openFiles: "Open files",
+  closePanel: "Close panel",
+  emptyFolder: "Empty folder",
+  loading: "Loading…",
+  errorPrefix: "Error: ",
+  retry: "Retry",
+  noWorkspace: "No workspace",
+  liveFallback: "Auto-refresh: polling directories (SSE unavailable)",
+  markdownMode: "Markdown mode",
+  sourceMode: "Source",
+  renderedMode: "Preview",
+  fileChanged: "File changed on disk",
+  update: "Update",
+  keepCurrent: "Keep current version",
+  previewUnavailablePrefix: "Preview unavailable: ",
+  localImagesUnavailable: "Local images are unavailable in the preview.",
+  fileTruncated: "File truncated at 5 MB; not all content is shown.",
+} as const;
+
+export type L10nKey = keyof typeof en;
+
+const ru: Record<L10nKey, string> = {
+  filesFallback: "Файлы",
+  refresh: "Обновить",
+  close: "Закрыть",
+  openFiles: "Открыть файлы",
+  closePanel: "Закрыть панель",
+  emptyFolder: "Пустая папка",
+  loading: "Загрузка…",
+  errorPrefix: "Ошибка: ",
+  retry: "Повторить",
+  noWorkspace: "Нет воркспейса",
+  liveFallback: "Автообновление: опрос каталогов (SSE недоступен)",
+  markdownMode: "Режим Markdown",
+  sourceMode: "Исходник",
+  renderedMode: "Предпросмотр",
+  fileChanged: "Файл изменён на диске",
+  update: "Обновить",
+  keepCurrent: "Оставить текущую версию",
+  previewUnavailablePrefix: "Предпросмотр недоступен: ",
+  localImagesUnavailable: "Локальные изображения недоступны в предпросмотре.",
+  fileTruncated: "Файл усечён до 5 МБ; показано не всё содержимое.",
+};
+
+export function detectLocale(navigatorLanguage: string, stored: string | null): Locale {
+  if (stored === "en" || stored === "ru") return stored;
+  const subtag = (navigatorLanguage ?? "").toLowerCase().split("-")[0] ?? "";
+  return subtag === "ru" ? "ru" : "en";
+}
+
+export function getMessage(locale: Locale, key: L10nKey): string {
+  return (locale === "ru" ? ru : en)[key];
+}
+
+function readStored(): string | null {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage.getItem(LOCALE_STORAGE_KEY);
+  } catch {
+    // storage unavailable (private mode / tests)
+  }
+  return null;
+}
+
+function navigatorLanguage(): string {
+  try {
+    return typeof navigator !== "undefined" ? navigator.language : "";
+  } catch {
+    return "";
+  }
+}
+
+let currentLocale: Locale = detectLocale(navigatorLanguage(), readStored());
+const listeners = new Set<() => void>();
+
+export function getLocale(): Locale {
+  return currentLocale;
+}
+
+export function setLocale(locale: Locale): void {
+  if (locale === currentLocale) return;
+  currentLocale = locale;
+  try {
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // storage unavailable
+  }
+  for (const listener of [...listeners]) listener();
+}
+
+export function subscribeLocale(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function t(key: L10nKey): string {
+  return getMessage(currentLocale, key);
+}
+
+export function attachBrowserLocaleSync(): void {
+  if (typeof window === "undefined") return;
+  window.addEventListener("storage", (event) => {
+    if (event.key !== LOCALE_STORAGE_KEY) return;
+    const next = detectLocale(navigatorLanguage(), event.newValue);
+    if (next !== currentLocale) {
+      currentLocale = next;
+      for (const listener of [...listeners]) listener();
+    }
+  });
+}
