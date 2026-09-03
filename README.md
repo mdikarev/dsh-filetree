@@ -81,7 +81,7 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests and the build on every pus
 
 - Behavioral source of truth lives in `docs/canon/` (doc-canon).
 - The maturity roadmap and per-phase specs/plans live under `docs/superpowers/`.
-- `CHANGELOG.md` follows Keep a Changelog; releases are tagged `vX.Y.Z`.
+- `CHANGELOG.md` follows Keep a Changelog; releases are tagged `vX.Y.Z` — see [RELEASING.md](RELEASING.md) for the release runbook.
 
 ## License
 
