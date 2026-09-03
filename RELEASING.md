@@ -1,6 +1,6 @@
 # Releasing
 
-How to cut a release of `dsh-filemanager`. Follow this runbook top to bottom; it mirrors what was done for v0.2.0. Release notes are written in **English** and sourced from `CHANGELOG.md`.
+How to cut a release of `dsh-filetree`. Follow this runbook top to bottom; it mirrors what was done for v0.2.0. Release notes are written in **English** and sourced from `CHANGELOG.md`.
 
 ## When to release
 
@@ -44,7 +44,7 @@ How to cut a release of `dsh-filemanager`. Follow this runbook top to bottom; it
 6. **Tag and push the tag:**
 
     ```bash
-    git tag -a v0.3.0 -m "dsh-filemanager 0.3.0"
+    git tag -a v0.3.0 -m "dsh-filetree 0.3.0"
     git push origin v0.3.0
     ```
 
@@ -52,7 +52,7 @@ How to cut a release of `dsh-filemanager`. Follow this runbook top to bottom; it
 
     ```bash
     # gh CLI variant (extracts the changelog section as the body):
-    gh release create v0.3.0 --title "dsh-filemanager 0.3.0" --notes-file <(sed -n '/^## \[0.3.0\]/,/^## \[/p' CHANGELOG.md | tail -n +2)
+    gh release create v0.3.0 --title "dsh-filetree 0.3.0" --notes-file <(sed -n '/^## \[0.3.0\]/,/^## \[/p' CHANGELOG.md | tail -n +2)
     ```
 
 8. **Publish to npm** (requires an npm token with publish scope; `npm login` refreshes `~/.npmrc`):
@@ -60,14 +60,14 @@ How to cut a release of `dsh-filemanager`. Follow this runbook top to bottom; it
     ```bash
     npm whoami        # confirm the account
     npm publish       # runs prepack -> build first
-    npm view dsh-filemanager version   # verify the release is live
+    npm view dsh-filetree version   # verify the release is live
     ```
 
 9. **Smoke-test the registry install** (best on a scratch profile, not the working one):
 
     ```bash
-    dsh plugin --profile web add dsh-filemanager
-    grep dsh-filemanager ~/.dsh/profiles/web/package.json   # registry version, not link:
+    dsh plugin --profile web add dsh-filetree
+    grep dsh-filetree ~/.dsh/profiles/web/package.json   # registry version, not link:
     ```
 
 ## Troubleshooting

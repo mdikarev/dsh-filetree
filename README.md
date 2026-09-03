@@ -1,4 +1,4 @@
-# dsh-filemanager
+# dsh-filetree
 
 Workspace file tree panel for the DeepSeek Harness (DSH) Web GUI — a read-only file explorer with live refresh, git status, and a text/markdown preview.
 
@@ -45,7 +45,7 @@ All requests require the `x-dsh-filemanager: 1` header. Paths are contained to t
 ### From npm (requires an npm registry release — currently tagged v0.2.0, publication may trail the git tag)
 
 ```bash
-dsh plugin --profile web add dsh-filemanager
+dsh plugin --profile web add dsh-filetree
 ```
 
 ### From a local checkout (development)
@@ -61,7 +61,7 @@ Then register the service in the profile patch (`~/.dsh/profiles/web/cordis.patc
 ```yaml
 - insert:
     - id: filemanager
-      name: 'dsh-filemanager'
+      name: 'dsh-filetree'
 ```
 
 Restart `dsh web` and refresh the browser.

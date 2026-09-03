@@ -28,7 +28,7 @@ const clientResult = await build({
 
 const clientCode = clientResult.outputFiles[0].text;
 const wrappedClient = `window.__ModuleLoader__.load({
-  id: "dsh-filemanager",
+  id: "dsh-filetree",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
