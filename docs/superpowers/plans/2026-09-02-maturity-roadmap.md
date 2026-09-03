@@ -17,7 +17,7 @@
 | 3 | **A** — performance on large repos | git-status snapshot cache (TTL + event invalidation), per-handler instance; watchers stay per-dir (W1) | spec drafted — `docs/superpowers/specs/2026-09-02-git-status-cache-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-git-status-cache.md` |
 | 4 | **B** — live-refresh resilience | watchdog for stalled SSE (server heartbeat + client inactivity) and setHint/poller correctness in Panel | spec drafted — `docs/superpowers/specs/2026-09-02-live-refresh-watchdog-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-live-refresh-watchdog.md` |
 | 5 | **G** — i18n + basic a11y | plugin-local en/ru i18n (EN default, RU preserved) + L1 a11y (tree semantics/keyboard, preview dialog/Esc, toggle button, focus styles) | spec drafted — `docs/superpowers/specs/2026-09-03-i18n-a11y-design.md` | ☑ done - 2026-09-03, plan `docs/superpowers/plans/2026-09-03-i18n-a11y.md` |
-| 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☐ |
+| 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☑ done — published as `dsh-filetree@0.2.0`, GitHub Release v0.2.0 created |
 
 ## Phase sketches (details per phase in chat)
 
