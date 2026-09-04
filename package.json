@@ -5,7 +5,7 @@
   "homepage": "https://github.com/mdikarev/dsh-filetree",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mdikarev/dsh-filetree.git"
+    "url": "git+https://github.com/mdikarev/dsh-filetree.git"
   },
   "bugs": {
     "url": "https://github.com/mdikarev/dsh-filetree/issues"
