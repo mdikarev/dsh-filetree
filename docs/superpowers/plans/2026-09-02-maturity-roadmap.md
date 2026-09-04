@@ -6,7 +6,7 @@
 
 **Status:** active — agreed 2026-09-02 (brainstorming session).
 **Goal balance:** public npm plugin for other DSH users + reliable daily tool (equal weight).
-**Scope boundary (first public release):** read-only explorer (tree + preview + drag-to-composer). File mutations (create/rename/delete/move) are deliberately out of scope for this roadmap — separate future phase requiring its own security design.
+**Scope boundary (current):** read-only explorer (tree + preview + drag-to-composer) plus confirmed, git-aware deletion via the row context menu (added in the 0.3.0 cycle). Remaining file mutations (create/rename/move/copy) are deliberately out of scope for this roadmap — a separate future phase requiring its own security design.
 
 ## Agreed priorities (in order)
 
@@ -18,7 +18,7 @@
 | 4 | **B** — live-refresh resilience | watchdog for stalled SSE (server heartbeat + client inactivity) and setHint/poller correctness in Panel | spec drafted — `docs/superpowers/specs/2026-09-02-live-refresh-watchdog-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-live-refresh-watchdog.md` |
 | 5 | **G** — i18n + basic a11y | plugin-local en/ru i18n (EN default, RU preserved) + L1 a11y (tree semantics/keyboard, preview dialog/Esc, toggle button, focus styles) | spec drafted — `docs/superpowers/specs/2026-09-03-i18n-a11y-design.md` | ☑ done - 2026-09-03, plan `docs/superpowers/plans/2026-09-03-i18n-a11y.md` |
 | 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☑ done — published as `dsh-filetree@0.2.0`, GitHub Release v0.2.0 created |
-| 7 | **0.3.0 cycle** — image preview (standalone + in-Markdown) + JSON pretty view | preview of images in the dock and inside Markdown, JSON Raw/Formatted mode; new `/cap` + `/raw` endpoints | none | in progress — spec+plan 2026-09-04 (`docs/superpowers/specs/2026-09-04-image-json-preview-design.md`, `docs/superpowers/plans/2026-09-04-image-json-preview.md`) |
+| 7 | **0.3.0 cycle** — image preview (standalone + in-Markdown) + JSON pretty view + context-menu deletion | preview of images in the dock and inside Markdown, JSON Raw/Formatted mode, confirmed delete via row context menu; new `/cap`, `/raw`, `/delete-info`, `/delete` endpoints | none | ☑ done - 2026-09-04, released as `dsh-filetree@0.3.0` (specs/plans 2026-09-04: `image-json-preview`, `file-deletion-context-menu`) |
 
 ## Phase sketches (details per phase in chat)
 
@@ -43,5 +43,5 @@
 
 ## Out of scope (parked)
 
-- File mutations — удаление спроектировано как первый slice (spec+plan 2026-09-04, контекстное меню); остальные мутации (create/rename/move) остаются parked; editor tabs; tree search/filter; "open in OS file manager".
-- Observability/UX error banner (audit item D) — candidate for the phase after this roadmap lands.
+- File mutations — удаление реализовано (0.3.0, контекстное меню + подтверждение); остальные мутации (create/rename/move/copy) остаются parked (требуют собственного security-дизайна); trash/undo/restore поверх удаления — parked-кандидат; editor tabs; multi-select rows; tree search/filter; "open in OS file manager".
+- Observability/UX error banner (audit item D) — in work (2026-09-04): unified toast/banner surface for background live-refresh failures with retry; see docs/canon after canon-write.

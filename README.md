@@ -6,6 +6,38 @@ Workspace file tree panel for the DeepSeek Harness (DSH) Web GUI — an explorer
 
 A toggle handle at the sidebar edge opens a 300 px panel showing the directory tree of the current session's workspace. Clicking a file opens a floating dock with its content: text with syntax highlighting, rendered Markdown, formatted JSON, or the image itself. File and folder rows can be dragged into the composer as @-mentions.
 
+## Screenshots
+
+<!-- Screenshots live in assets/screenshots/ (referenced relatively, so the
+     tarball ships them only when present; files are excluded from the npm
+     package via "files": ["lib", "README.md"] — for the README on npm this
+     section is intentionally absent until assets are published another way). -->
+
+> **Note for maintainers:** add PNGs under `assets/screenshots/` and they will
+> appear here on GitHub (this README is mirrored there). The npm tarball does
+> not include `assets/`, so these images render on the GitHub repo page only.
+
+| Panel + tree | Preview dock (Markdown) |
+| --- | --- |
+| ![File tree panel with git status](./assets/screenshots/tree-panel.png) | ![Markdown preview in the dock](./assets/screenshots/preview-markdown.png) |
+
+| Image preview | Context menu (Delete) |
+| --- | --- |
+| ![Image preview with zoom toolbar](./assets/screenshots/preview-image.png) | ![Tree row context menu with Delete](./assets/screenshots/context-menu.png) |
+
+Each row above is one suggested capture from the live GUI (dark or light theme —
+the panel adapts via DSH tokens):
+
+1. **tree-panel.png** — the panel open at the sidebar edge with folders expanded
+   and git badges visible (a workspace with a few modified/untracked files shows
+   the badges best).
+2. **preview-markdown.png** — a `.md` file open in the dock in Preview mode.
+3. **preview-image.png** — an image file open in the dock (zoom toolbar visible).
+4. **context-menu.png** — the row context menu (right-click) with the Delete
+   command highlighted. The confirmation dialog that follows is shown in the
+   plugin docs and covered by tests; capturing it here requires a server build
+   with the delete-info preflight action live.
+
 ## Features
 
 - **Tree panel**: lazy directory loading on expand, folders first then case-insensitive alphabet, dotfiles shown (`node_modules` and `.git` filtered), theme-aware styling via DSH tokens (auto dark/light).

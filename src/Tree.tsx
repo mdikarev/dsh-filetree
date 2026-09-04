@@ -13,7 +13,8 @@ interface TreeNodeProps {
   entry: Entry;
   hint: string;
   path: string;
-  onError: (msg: string) => void;
+  /** Folder load/refresh failures; retry target = failing directory path. */
+  onError: (msg: string, path?: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
   onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }, anchor: HTMLElement) => void;
   store: FileManagerStore;
@@ -98,7 +99,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
         applyListing(res, fullPath);
       })
       .catch((err: any) => {
-        onError(`Failed to refresh ${fullPath}: ${err.message}`);
+        onError(`Failed to refresh ${fullPath}: ${err.message}`, fullPath);
       })
       .finally(() => {
         setLoading(false);
@@ -128,7 +129,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
           applyListing(res, fullPath);
         })
         .catch((err: any) => {
-          onError(`Failed to load ${fullPath}: ${err.message}`);
+          onError(`Failed to load ${fullPath}: ${err.message}`, fullPath);
           setChildren([]);
         })
         .finally(() => {
@@ -161,7 +162,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
         const res = await fetchList(hint, fullPath);
         applyListing(res, fullPath);
       } catch (err: any) {
-        onError(`Failed to load ${fullPath}: ${err.message}`);
+        onError(`Failed to load ${fullPath}: ${err.message}`, fullPath);
         setChildren([]);
       } finally {
         setLoading(false);
@@ -346,7 +347,7 @@ interface TreeProps {
   label: string;
   hint: string;
   entries: Entry[];
-  onError: (msg: string) => void;
+  onError: (msg: string, path?: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
   onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }, anchor: HTMLElement) => void;
   store: FileManagerStore;

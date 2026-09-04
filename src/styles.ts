@@ -745,4 +745,57 @@ body[data-ds-dark-theme] {
   color: var(--dsw-alias-state-error-primary);
 }
 
+
+/* Error/toast surface for background live-refresh failures */
+.fm-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+  z-index: 2000;
+}
+.fm-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--fm-surface-elevated);
+  border: 1px solid var(--fm-border-strong);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.4;
+}
+.fm-toast--error {
+  border-left: 3px solid var(--dsw-alias-state-error-primary);
+}
+.fm-toast--warning {
+  border-left: 3px solid var(--fm-git-changed);
+}
+.fm-toast-message {
+  flex: 1;
+  word-break: break-word;
+}
+.fm-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.fm-toast-btn {
+  border: 1px solid var(--fm-border-strong);
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fm-toast-btn:hover { background: var(--fm-hover); }
+.fm-toast-btn--retry { color: var(--dsw-alias-accent-primary, var(--fm-file-code)); }
+.fm-toast-btn--close { border: none; padding: 3px 6px; color: var(--dsw-alias-label-secondary); }
 `;

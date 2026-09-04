@@ -29,6 +29,6 @@
 
 ---
 
-Status: implementing (2026-09-04 — дизайн согласован: spec docs/superpowers/specs/2026-09-04-file-deletion-context-menu-design.md; trash/undo и мультивыбор вынесены из объёма)
-Depends: дерево + контекстные меню отсутствуют (базовый клик/drag уже есть), live refresh и git-бейджи реализованы
-Unblocks: остальные мутации (rename/create/move), git-ориентированные действия (например, discard/restore)
+Status: absorbed (2026-09-04 — реализовано и выпущено в v0.3.0: контекстное меню строки (правый клик / Menu / Shift+F10) с командой «Удалить…», read-only preflight `delete-info` и POST `delete` (symlink-safe, защита корня и `.git`), инлайн-диалог подтверждения с предупреждением о незакоммиченных git-изменениях; после успеха — закрытие preview удалённого файла, prune раскрытых путей, обновление через live refresh. Открытые вопросы закрыты: подтверждение — инлайн-диалог плагина; uncommitted — предупреждение, не запрет; trash/undo и мультивыбор остались вне объёма (см. roadmap).)
+Depends: дерево + контекстные меню, live refresh и git-бейджи реализованы (v0.2.0)
+Unblocks: остальные мутации (rename/create/move), git-ориентированные действия (например, discard/restore), trash/undo-слой над удалением

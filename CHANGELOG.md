@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Background live-refresh failures surface as error toasts (expanded-directory
+  listing and root-refresh errors with a targeted Retry action; SSE degradation
+  shows a transient warning toast) — `notices.ts` store + `ErrorToast`
+- jsdom render tests for the file panel (`test/panel-render.test.ts`:
+  @testing-library/react; tree render, folder expand, preview open/Escape,
+  context-menu delete flow) — new devDependencies jsdom,
+  @testing-library/react, @testing-library/dom, react-dom
+- README "Screenshots" section with captures (tree panel, markdown preview,
+  image preview, row context menu) under `assets/screenshots/`
+
+### Changed
+
+- Decomposed `Panel.tsx` (830 -> ~550 lines): pure preview presentation moved
+  to `preview-logic.ts`, delete-flow state machine to `use-delete-flow.ts`,
+  preview dock state/drag/resize/cap handling to `use-preview-dock.ts`
+- Canon statuses synced: deletion future-plan absorbed, roadmap phase 7 done
+  (released 0.3.0); error-surface behavior documented in OVERVIEW/ARCHITECTURE
+
+### Fixed
+
+- Tree rows now report the failing directory path to error handlers so a
+  toast's Retry reloads exactly the directory that failed
+
 ## [0.3.0] - 2026-09-04
 
 ### Added

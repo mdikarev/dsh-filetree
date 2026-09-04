@@ -1,22 +1,21 @@
 // src/Panel.tsx
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { fetchRoot, fetchList, sortEntries, type Entry, type ListResponse } from "./api.js";
-import { fetchFile } from "./preview-api.js";
-import { isMarkdownFile, rawMarkdownImageUrl, renderMarkdown } from "./markdown-preview.js";
-import { highlightSource } from "./syntax-highlighting.js";
-import { clampPosition, type Point } from "./preview-position.js";
+import { isMarkdownFile } from "./markdown-preview.js";
 import { Tree, type TreeHandle } from "./Tree.js";
 import { ContextMenu } from "./ContextMenu.js";
-import { fetchDeleteInfo, fetchDelete, type DeleteInfo } from "./mutate-api.js";
 import { buildDeleteDialogModel, isPreviewAffected } from "./delete-flow.js";
+import { useDeleteFlow } from "./use-delete-flow.js";
+import { usePreviewDock } from "./use-preview-dock.js";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog.js";
-import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
+import { createLiveRefreshCoordinator, staleExpandedPathsUnder } from "./live-refresh.js";
 import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
 import { useL10n } from "./use-l10n.js";
 import { classifyPreviewKind } from "./preview-kind.js";
 import { buildRawFileUrl } from "./raw-url.js";
-import { capCache } from "./caps.js";
+import { noticeStore } from "./notices.js";
+import { ErrorToast } from "./ErrorToast.js";
 import { ImageView } from "./ImageView.js";
 import { formatJson, type JsonDisplay } from "./json-view.js";
 
@@ -30,79 +29,27 @@ interface PanelProps {
 
 type Status = "loading" | "ready" | "error" | "no-workspace";
 
-export type PreviewPresentation =
-  | { kind: "rendered"; html: string; blockedExternalImages: number }
-  | { kind: "source" | "highlighted-source"; content: string; html?: string | null; error?: string };
-
-export function getPreviewPresentation(
-  fileName: string,
-  content: string,
-  truncated: boolean,
-  mode: "source" | "rendered",
-  workspaceHint: string,
-  imageCapForMarkdown?: string | null,
-): PreviewPresentation {
-  const highlighted = highlightSource(fileName, content, truncated);
-  if (!isMarkdownFile(fileName) || mode === "source") {
-    return highlighted.highlighted
-      ? { kind: "highlighted-source", content, html: highlighted.html }
-      : { kind: "source", content };
-  }
-  try {
-    const resourceUrl = imageCapForMarkdown
-      ? (resource: string) => rawMarkdownImageUrl(workspaceHint, fileName, resource, imageCapForMarkdown)
-      : undefined;
-    return { kind: "rendered", ...renderMarkdown(content, { filePath: fileName, workspaceHint, resourceUrl }) };
-  } catch (error) {
-    return { kind: "source", content, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/**
- * Pure confirmation state for the changed-preview banner. The coordinator's
- * change callback delivers debounced per-path changes; these helpers match
- * them against the current preview identity (the preview path; workspace
- * identity is already enforced by the coordinator's hint-keyed lifecycle)
- * and drive the banner's show / dismiss / refresh-clear transitions.
- */
-export type ChangedPreviewState =
-  | { kind: "idle" }
-  | { kind: "changed"; path: string; changeKind: FileChangeKind }
-  | { kind: "dismissed"; path: string };
-
-export type FileChangeKind = FileChange["kind"];
-
-/**
- * Reduce a change batch against the current preview path. Changes for other
- * files never show the banner; a matching event shows it (repeated events for
- * an already-shown file keep a single banner); a dismissed banner re-appears
- * only for a new event of the same file; a banner for a different file than
- * the current preview is stale and is cleared.
- */
-export function reduceChangedPreview(
-  state: ChangedPreviewState,
-  changes: FileChange[],
-  previewPath: string | null
-): ChangedPreviewState {
-  if (previewPath === null) return { kind: "idle" };
-  if (state.kind !== "idle" && state.path !== previewPath) {
-    state = { kind: "idle" };
-  }
-  const match = changes.find((change) => change.path === previewPath);
-  if (!match) return state;
-  if (state.kind === "changed" && state.path === match.path) return state;
-  return { kind: "changed", path: match.path, changeKind: match.kind };
-}
-
-/** Hide the banner and remember the file until its next change event. */
-export function dismissChangedPreview(state: ChangedPreviewState): ChangedPreviewState {
-  return state.kind === "changed" ? { kind: "dismissed", path: state.path } : state;
-}
-
-/** Clear the banner after a successful refresh. */
-export function clearChangedPreview(): ChangedPreviewState {
-  return { kind: "idle" };
-}
+// Pure preview presentation + changed-preview state helpers live in
+// ./preview-logic.ts (unit-tested there); imported here for use by the panel
+// and re-exported so existing consumers importing from Panel keep working.
+import {
+  getPreviewPresentation,
+  reduceChangedPreview,
+  dismissChangedPreview,
+  clearChangedPreview,
+  type PreviewPresentation,
+  type ChangedPreviewState,
+  type FileChangeKind,
+} from "./preview-logic.js";
+export {
+  getPreviewPresentation,
+  reduceChangedPreview,
+  dismissChangedPreview,
+  clearChangedPreview,
+  type PreviewPresentation,
+  type ChangedPreviewState,
+  type FileChangeKind,
+};
 
 export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const { t } = useL10n();
@@ -115,51 +62,62 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // True while the polling fallback is active (SSE unavailable).
   const [liveFallback, setLiveFallback] = useState(false);
 
-  // Tree-row context menu (right-click / Menu key) + the delete flow it
-  // triggers: pending delete target, then preflight info, busy and error for
-  // the confirmation dialog (see handleConfirmDelete and the dialog render).
-  const [contextMenu, setContextMenu] = useState<{ path: string; name: string; x: number; y: number; anchor: HTMLElement | null } | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string } | null>(null);
-  // Delete-confirmation dialog: preflight delete-info for the pending target,
-  // in-flight busy flag and localized error surfaced inside the dialog.
-  const [deleteInfo, setDeleteInfo] = useState<DeleteInfo | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Deleted-path side effects (close an affected preview) route through a ref
+  // because useDeleteFlow is created before handleClosePreview is defined.
+  const handleDeletedRef = useRef<(deletedPath: string) => void>(() => {});
+  const deleteFlow = useDeleteFlow({
+    hint,
+    store,
+    onDeleted: (deletedPath) => handleDeletedRef.current(deletedPath),
+  });
+  const { contextMenu, pendingDelete, deleteInfo, deleteBusy, deleteError } = deleteFlow;
 
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewTitle, setPreviewTitle] = useState("");
-  const [previewPath, setPreviewPath] = useState("");
-  const previewMode = useSyncExternalStore(store.subscribe, () => store.getState().previewMode);
+  // Preview dock state + logic live in usePreviewDock (open/close, content
+  // fetch, drag/resize, changed-preview banner, image cap handling). It needs
+  // the current hint and delete-pending state through stable getters so its
+  // callbacks never recreate the live-refresh coordinator or fight Esc.
+  const previewHintRef = useRef(hint);
+  useEffect(() => {
+    previewHintRef.current = hint;
+  }, [hint]);
+  const deletePendingRef = useRef(false);
+  useEffect(() => {
+    deletePendingRef.current = pendingDelete !== null;
+  }, [pendingDelete]);
+  const previewDock = usePreviewDock({
+    store,
+    getHint: () => previewHintRef.current,
+    isDeletePending: () => deletePendingRef.current,
+  });
+  const {
+    open: previewOpen,
+    title: previewTitle,
+    path: previewPath,
+    loading: previewLoading,
+    error: previewError,
+    content: previewContent,
+    truncated: previewTruncated,
+    pos: previewPos,
+    size: previewSize,
+    changedPreview,
+    imageCap,
+    imageVersion,
+    previewMode,
+    windowRef: previewWindowRef,
+    pathRef: previewPathRef,
+    openFile: handleOpenFile,
+    close: handleClosePreview,
+    refreshChanged: handleRefreshChangedPreview,
+    dismissChanged: handleDismissChangedPreview,
+    receiveChanges,
+    retryImage,
+    dragStart: handleDragStart,
+    dragMove: handleDragMove,
+    dragEnd: handleDragEnd,
+  } = previewDock;
+
   const jsonMode = useSyncExternalStore(store.subscribe, () => store.getState().jsonMode);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState("");
-  const [previewContent, setPreviewContent] = useState("");
-  const [previewTruncated, setPreviewTruncated] = useState(false);
-  const [previewPos, setPreviewPos] = useState<Point | null>(null);
-  const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
-  // Changed-preview confirmation banner state (idle | changed | dismissed).
-  const [changedPreview, setChangedPreview] = useState<ChangedPreviewState>({ kind: "idle" });
-  const [imageCap, setImageCap] = useState<string | null>(null);
-  const [imageVersion, setImageVersion] = useState(0);
 
-  const previewWindowRef = useRef<HTMLDivElement | null>(null);
-  const previewPosRef = useRef<Point | null>(null);
-  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
-  const saveTimerRef = useRef<number | null>(null);
-  const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
-  // Latest preview path for the coordinator's change callback without
-  // restarting the EventSource whenever a file is opened.
-  const previewPathRef = useRef(previewPath);
-
-  // Keep a ref in sync with the position state so drag-start always sees the
-  // latest position (also across multiple consecutive drags).
-  useEffect(() => {
-    previewPosRef.current = previewPos;
-  }, [previewPos]);
-
-  useEffect(() => {
-    previewPathRef.current = previewPath;
-  }, [previewPath]);
 
   // Latest workspace hint for coordinator callbacks (refreshRootEntries,
   // listDirStable) without restarting the coordinator whenever the workspace
@@ -169,11 +127,6 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   useEffect(() => {
     hintRef.current = hint;
   }, [hint]);
-
-  // Previous hint, so the image-cap hint-change effect below runs only when
-  // the workspace hint actually changed (not on every image open/switch);
-  // mirrors the hintRef pattern above.
-  const prevHintRef = useRef(hint);
 
   // The live-refresh coordinator lives for the whole open panel; hint changes
   // are routed through coordinatorRef.current.setHint (see the effects below).
@@ -186,9 +139,45 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [hint, store]);
 
-  const handleError = useCallback((msg: string) => {
-    // Show inline error for individual folder failures
+  // Latest root-refresh closure for error-toast retry (handleError below is
+  // created before refreshRootEntries, so retry reads through this ref).
+  const refreshRootRef = useRef<() => void>(() => {});
+
+  // Background live-refresh failures are surfaced as error toasts (not just
+  // console.warn): a failed expanded-directory listing or root refresh would
+  // otherwise leave the tree silently stale. The toast is deduped by message,
+  // so repeated failures of the same directory keep a single notice, and its
+  // «Повторить»/Retry action reloads exactly what failed: the affected
+  // directory (via the Tree handle) or the root listing (via refreshRootRef).
+  const handleError = useCallback((msg: string, path?: string) => {
     console.warn("[filemanager]", msg);
+    noticeStore.push({
+      key: msg,
+      kind: "error",
+      message: msg,
+      retry: path
+        ? () => treeRef.current?.refreshPaths([path])
+        : () => refreshRootRef.current(),
+    });
+  }, []);
+
+  // SSE degradation (stalled/lost connection) shows a transient warning toast:
+  // the persistent liveFallback banner already communicates the polling state,
+  // so this toast auto-dismisses and has no Retry (reconnect runs on its own).
+  // The localized text is read through a ref so the callback stays stable and
+  // the open coordinator is never recreated by a locale re-render.
+  const sseWarningRef = useRef(t("liveRefreshUnavailable"));
+  useEffect(() => {
+    sseWarningRef.current = t("liveRefreshUnavailable");
+  }, [t]);
+  const handleSseError = useCallback((msg: string) => {
+    console.warn("[filemanager]", msg);
+    noticeStore.push({
+      key: "sse-degraded",
+      kind: "warning",
+      message: sseWarningRef.current,
+      autoDismissMs: 8000,
+    });
   }, []);
 
   // When a root listing no longer contains an expanded top-level directory,
@@ -245,6 +234,10 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [handleError, pruneRootStale]);
 
+  useEffect(() => {
+    refreshRootRef.current = refreshRootEntries;
+  }, [refreshRootEntries]);
+
   // Route affected directories from the live-refresh coordinator: the root
   // listing is owned by the Panel, deeper directories by the Tree handle.
   const handleRefreshDirs = useCallback((paths: string[]) => {
@@ -270,241 +263,15 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // Coordinator change callback: match the debounced change batch against the
   // current preview identity. Reading previewPath through a ref keeps the
   // callback stable, so opening files never restarts the EventSource.
-  const handleFileChanges = useCallback((changes: FileChange[]) => {
-    setChangedPreview((prev) => reduceChangedPreview(prev, changes, previewPathRef.current));
-  }, []);
-
-  // «Обновить»: re-fetch the current hint/path; clear the banner only after a
-  // successful load. On failure the existing preview error display surfaces
-  // the read error and the banner stays for another attempt or dismiss.
-  const handleRefreshChangedPreview = useCallback(async () => {
-    if (!hint || !previewPath) return;
-    if (classifyPreviewKind(previewTitle) === "image") {
-      setImageVersion((v) => v + 1);
-      setChangedPreview({ kind: "idle" });
-      return;
-    }
-    setPreviewLoading(true);
-    try {
-      const res = await fetchFile(hint, previewPath);
-      setPreviewContent(res.content);
-      setPreviewTruncated(Boolean(res.truncated));
-      setPreviewError("");
-      setChangedPreview({ kind: "idle" });
-    } catch (err: any) {
-      setPreviewError(err?.message ?? String(err));
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [hint, previewPath, previewTitle]);
-
-  // «Оставить текущую версию»: hide the banner until the file's next event.
-  const handleDismissChangedPreview = useCallback(() => {
-    setChangedPreview((prev) => dismissChangedPreview(prev));
-  }, []);
-
-  const commitLayout = useCallback(() => {
-    const el = previewWindowRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    store.setPreviewLayout({
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    });
-  }, [store]);
-
-  const handleOpenFile = useCallback(async (fullPath: string, entry: Entry) => {
-    if (!hint) return;
-    const layout = store.getState().previewLayout;
-    setPreviewPos(layout ? { x: layout.x, y: layout.y } : null);
-    setPreviewSize(layout ? { width: layout.width, height: layout.height } : null);
-    setPreviewTitle(entry.name);
-    setPreviewPath(fullPath);
-    setPreviewOpen(true);
-    setPreviewLoading(true);
-    setPreviewError("");
-    setPreviewContent("");
-    setPreviewTruncated(false);
-    setChangedPreview({ kind: "idle" });
-    setImageVersion(0);
-
-    const kind = classifyPreviewKind(entry.name);
-    try {
-      if (kind === "image") {
-        const cap = await capCache.getCap(hint);
-        setImageCap(cap);
-        return;
-      }
-      const res = await fetchFile(hint, fullPath);
-      setPreviewContent(res.content);
-      setPreviewTruncated(Boolean(res.truncated));
-      if (kind === "markdown") {
-        capCache.getCap(hint).then(setImageCap).catch(() => {});
-      }
-    } catch (err: any) {
-      setPreviewError(err?.message ?? String(err));
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [hint, store]);
-
-  // When the hint changes with an image or markdown preview open, invalidate
-  // + refetch the cap so raw image URLs point at the new workspace (images via
-  // the bumped version, markdown's local images via a fresh cap on re-render).
-  // Runs only when the hint actually changed: previewOpen/previewTitle
-  // transitions (image open/switch) must not re-issue the cap request or
-  // remount the view.
+  // Deleting a file/folder closes a preview of it (or of anything under a
+  // deleted folder); routed through the ref set up by the delete-flow hook.
   useEffect(() => {
-    if (prevHintRef.current === hint) return;
-    prevHintRef.current = hint;
-    const kind = classifyPreviewKind(previewTitle);
-    if (!hint || !previewOpen || (kind !== "image" && kind !== "markdown")) return;
-    setImageCap(null);
-    if (kind === "image") setImageVersion((v) => v + 1);
-    capCache.invalidate(hint);
-    capCache.getCap(hint).then(setImageCap).catch((err: any) => setPreviewError(err?.message ?? String(err)));
-  }, [hint, previewOpen, previewTitle]);
-
-  const handleClosePreview = useCallback(() => {
-    setPreviewOpen(false);
-    setPreviewPos(null);
-    setPreviewSize(null);
-    dragRef.current = null;
-    setChangedPreview({ kind: "idle" });
-  }, []);
-
-  // Close the preview dialog on Escape while it is open. The delete-confirm
-  // dialog takes Esc precedence: while a delete is pending (dialog open or
-  // its delete-info still loading) the preview dock must not close.
-  useEffect(() => {
-    if (!previewOpen) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (pendingDelete) return;
-      if (event.key === "Escape") handleClosePreview();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [previewOpen, handleClosePreview, pendingDelete]);
-
-  // When a delete becomes pending, preflight its delete-info (kind, root,
-  // uncommitted git state) so the confirm dialog can show warnings and block
-  // deleteable-as-root / missing targets; a failed preflight surfaces as a
-  // dialog error with a blocked (missing) model.
-  useEffect(() => {
-    if (!pendingDelete || !hint) { setDeleteInfo(null); return; }
-    let cancelled = false;
-    setDeleteBusy(false);
-    setDeleteError(null);
-    fetchDeleteInfo(hint, pendingDelete.path)
-      .then((info) => { if (!cancelled) setDeleteInfo(info); })
-      .catch((err: any) => { if (!cancelled) { setDeleteError(err?.message ?? String(err)); setDeleteInfo(null); } });
-    return () => { cancelled = true; };
-  }, [pendingDelete, hint]);
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!hint || !pendingDelete || !deleteInfo) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    try {
-      await fetchDelete(hint, pendingDelete.path);
-      const deletedPath = pendingDelete.path;
-      // Close a preview of the deleted file / a file under the deleted folder.
+    handleDeletedRef.current = (deletedPath: string) => {
       if (previewPathRef.current && isPreviewAffected(deletedPath, previewPathRef.current)) {
         handleClosePreview();
       }
-      // Drop expanded state under the deleted path.
-      const expanded = store.getExpandedPaths();
-      const stale = expanded.filter((p) => p === deletedPath || p.startsWith(deletedPath + "/"));
-      if (stale.length > 0) store.pruneExpandedPaths(stale);
-      // The fs event from the delete itself refreshes the parent listings.
-      setPendingDelete(null);
-      setDeleteInfo(null);
-    } catch (err: any) {
-      setDeleteError(err?.message ?? String(err));
-    } finally {
-      setDeleteBusy(false);
-    }
-  }, [hint, pendingDelete, deleteInfo, store, handleClosePreview]);
-
-  const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    // Не перетаскиваем, если нажатие пришлось на кнопку (например, ✕)
-    if ((e.target as HTMLElement).closest("button")) return;
-    const el = previewWindowRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const current = previewPosRef.current ?? { x: rect.left, y: rect.top };
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: current.x,
-      origY: current.y,
     };
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {}
-    e.preventDefault();
-  }, []);
-
-  const handleDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current;
-    const el = previewWindowRef.current;
-    if (!d || !el) return;
-    const nx = d.origX + (e.clientX - d.startX);
-    const ny = d.origY + (e.clientY - d.startY);
-    const rect = el.getBoundingClientRect();
-    const clamped = clampPosition(
-      nx,
-      ny,
-      rect.width,
-      rect.height,
-      window.innerWidth,
-      window.innerHeight
-    );
-    setPreviewPos(clamped);
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    dragRef.current = null;
-    commitLayout();
-  }, [commitLayout]);
-
-  // Следим за изменением размера (CSS resize) и сохраняем layout по воркспейсу
-  useEffect(() => {
-    if (!previewOpen) return;
-    const el = previewWindowRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      const rect = el.getBoundingClientRect();
-      const next = { width: rect.width, height: rect.height };
-      const prev = lastSizeRef.current;
-      // Обновляем state только при реальном изменении размера,
-      // иначе каждый кадр порождает ре-рендер (и рост панели).
-      if (!prev || prev.width !== next.width || prev.height !== next.height) {
-        lastSizeRef.current = next;
-        setPreviewSize(next);
-      }
-      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(() => {
-        store.setPreviewLayout({
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        });
-      }, 250);
-    });
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      if (saveTimerRef.current !== null) {
-        window.clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-    };
-  }, [previewOpen, store]);
+  }, [handleClosePreview, previewPathRef]);
 
   // Load on mount and when hint changes
   useEffect(() => {
@@ -524,7 +291,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       getExpandedPaths: store.getExpandedPaths,
       subscribeExpandedPaths: store.subscribeExpandedPaths,
       refreshDirs: handleRefreshDirs,
-      onFileChange: handleFileChanges,
+      onFileChange: receiveChanges,
       onError: handleError,
       // Fetch-based SSE: the events endpoint requires the security header,
       // which the native EventSource cannot send (403 -> permanent polling
@@ -539,7 +306,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
       coordinatorRef.current = null;
       coordinator.stop();
     };
-  }, [open, store, handleRefreshDirs, handleFileChanges, handleError, listDirStable]);
+  }, [open, store, handleRefreshDirs, receiveChanges, handleError, handleSseError, listDirStable]);
 
   // Route hint changes through setHint so the open coordinator's subscription
   // follows the panel's current workspace without a restart. Declared after
@@ -633,7 +400,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               onError={handleError}
               store={store}
               onOpenFile={handleOpenFile}
-              onRowContextMenu={(path, name, _kind, point, anchor) => setContextMenu({ path, name, x: point.x, y: point.y, anchor })}
+              onRowContextMenu={(path, name, _kind, point, anchor) => deleteFlow.openContextMenu({ path, name, x: point.x, y: point.y, anchor })}
             />
           )}
         </div>
@@ -644,20 +411,13 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           x={contextMenu.x}
           y={contextMenu.y}
           anchorRow={contextMenu.anchor}
-          onClose={() => {
-            setPendingDelete(null);
-            setContextMenu(null);
-          }}
+          onClose={deleteFlow.closeContextMenu}
           items={[
             {
               id: "delete",
               label: t("deleteMenuItem"),
               danger: true,
-              onSelect: () => {
-                // The effect above preflights delete-info and opens the
-                // confirm dialog for this pending target.
-                setPendingDelete({ path: contextMenu.path, name: contextMenu.name });
-              },
+              onSelect: deleteFlow.requestDelete,
             },
           ]}
         />
@@ -732,7 +492,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             {!previewLoading && !previewError && isImage && imageCap && (
               <ImageView
                 src={buildRawFileUrl(hint, previewPath, imageCap, imageVersion)}
-                onRetry={() => setImageVersion((v) => v + 1)}
+                onRetry={retryImage}
               />
             )}
             {!previewLoading && !previewError && isJson && jsonDisplay?.note === "parse" && (
@@ -778,10 +538,12 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
           )}
           busy={deleteBusy}
           error={deleteError}
-          onCancel={() => { setPendingDelete(null); setDeleteInfo(null); setDeleteError(null); }}
-          onConfirm={handleConfirmDelete}
+          onCancel={deleteFlow.cancelDelete}
+          onConfirm={() => { void deleteFlow.confirmDelete(); }}
         />
       )}
+
+      <ErrorToast />
     </>
   );
 }
