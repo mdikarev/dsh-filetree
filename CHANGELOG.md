@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Image preview in the file dock: raster (png/jpeg/gif/webp/avif) and svg
+  files open fitted with zoom controls (buttons, Ctrl+wheel, double-click),
+  dimensions in the toolbar and "open original in a new tab"; SVG responses
+  are served with a sandbox CSP
+- Workspace-local relative images now render inside the Markdown preview;
+  external images remain blocked
+- JSON files get a Raw/Formatted toggle (Formatted default for valid JSON
+  under 1 MB; invalid or oversized files fall back to raw with a note)
+- Server capability endpoint `GET /filemanager-fs/cap` and image endpoint
+  `GET /filemanager-fs/raw` (byte caps 20 MB raster / 2 MB svg;
+  nosniff/no-store)
+
+### Security
+
+- Image bytes are served only to URLs carrying an unguessable, expiring
+  per-workspace capability token; all other endpoints keep the
+  `x-dsh-filemanager` header gate
+
 ## [0.2.0] - 2026-09-03
 
 ### Added

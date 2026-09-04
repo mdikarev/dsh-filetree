@@ -1,6 +1,6 @@
 # dsh-filetree
 
-Workspace file tree panel for the DeepSeek Harness (DSH) Web GUI — a read-only file explorer with live refresh, git status, and a text/markdown preview.
+Workspace file tree panel for the DeepSeek Harness (DSH) Web GUI — a read-only file explorer with live refresh, git status, and text/markdown/image previews.
 
 [![CI](https://github.com/mdikarev/dsh-filetree/actions/workflows/ci.yml/badge.svg)](https://github.com/mdikarev/dsh-filetree/actions/workflows/ci.yml)
 
@@ -12,7 +12,9 @@ A toggle handle at the sidebar edge opens a 300 px panel showing the directory t
 - **Git status**: per-file and per-folder badges (modified / added / untracked / ignored) with folder summaries; ignored rows muted.
 - **Live refresh**: the tree updates automatically via a fetch-based SSE stream with a polling fallback. A server heartbeat + client watchdog detect a stalled connection and degrade to polling with a status banner instead of freezing silently.
 - **Performance**: the workspace git-status snapshot is cached server-side (TTL + event invalidation), so refresh bursts share a single `git status` run.
-- **Preview dock**: draggable by its header, resizable, position/size remembered per workspace; text files up to 5 MB (truncation notice); Markdown renders with a Source/Preview toggle; syntax highlighting for common languages.
+- **Preview dock**: draggable by its header, resizable, position/size remembered per workspace; text files up to 5 MB (truncation notice); Markdown renders with a Source/Preview toggle — workspace-local relative images render inline, external images stay blocked; syntax highlighting for common languages.
+- **Image preview**: raster (png/jpeg/gif/webp/avif) and svg files open fitted to the panel with zoom controls (buttons, Ctrl+wheel, double-click) and image dimensions in the toolbar; "open original" opens the raw file in a new tab; SVG responses are served with a sandbox CSP.
+- **JSON view**: Raw/Formatted toggle — Formatted is the default for valid JSON under 1 MB; invalid or oversized files fall back to raw with a note.
 - **Composer integration**: drag files/folders from the tree into the composer to insert @-mention references.
 - **Truncated names**: hovering a row whose name is clipped shows a themed tooltip with the full name (only when truncated).
 - **i18n**: UI copy is localized — English by default, Russian auto-selected for ru-locale browsers (override: `fm-locale` in localStorage).
@@ -30,15 +32,17 @@ The plugin registers a `/filemanager-fs` prefix on the DSH host:
 - `GET /filemanager-fs/list?hint=<workspace>&path=<rel>` — directory listing with git status
 - `GET /filemanager-fs/read?hint=<workspace>&path=<rel>` — text file content (up to 5 MB; `truncated: true` when cut)
 - `GET /filemanager-fs/events?hint=<workspace>&paths=<json>` — SSE stream of workspace changes (and `git-changed` events), with a heartbeat
+- `GET /filemanager-fs/cap?hint=<workspace>` — mints an unguessable, expiring per-workspace capability token used to authorize image URLs
+- `GET /filemanager-fs/raw?hint=<workspace>&path=<rel>&cap=<token>` — serves image bytes to capability URLs (byte caps: 20 MB raster / 2 MB svg; `nosniff`/`no-store`)
 
-All requests require the `x-dsh-filemanager: 1` header. Paths are contained to the workspace (realpath + escape checks, symlink-safe), and git is invoked read-only.
+All endpoints except `GET /filemanager-fs/raw` require the `x-dsh-filemanager: 1` header. `/raw` is the only endpoint reachable without it — capability URLs must work as plain `<img>` sources and inside the Markdown preview — and authenticates via the token from `/cap`. Paths are contained to the workspace (realpath + escape checks, symlink-safe), and git is invoked read-only.
 
 ## Compatibility
 
 - **Node** >= 20 (`engines`).
 - **React 18** — provided by the DSH web host, not bundled (peer `^18.2.0`; verified against 18.3.1).
 - **DSH**: built and tested against `@deepseek-ai/dsh@0.1.1-rc.2` (web profile). The plugin host and client APIs are pre-1.0 — pin the dsh version you deploy and re-test after dsh upgrades.
-- **Trust model**: server endpoints are served by the dsh host on localhost and rely on the `x-dsh-filemanager` header plus the browser's same-origin/CORS behavior — treat the local dsh process as the trust boundary.
+- **Trust model**: server endpoints are served by the dsh host on localhost and rely on the `x-dsh-filemanager` header (image bytes additionally require an unguessable, expiring per-workspace capability token) plus the browser's same-origin/CORS behavior — treat the local dsh process as the trust boundary.
 
 ## Installation
 
