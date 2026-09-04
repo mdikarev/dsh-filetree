@@ -335,16 +335,19 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     }
   }, [hint, store]);
 
-  // When the hint changes with an image open, invalidate + refetch the cap
-  // and bump the version so the raw URL points at the new workspace. Runs
-  // only when the hint actually changed: previewOpen/previewTitle transitions
-  // (image open/switch) must not re-issue the cap request or remount the view.
+  // When the hint changes with an image or markdown preview open, invalidate
+  // + refetch the cap so raw image URLs point at the new workspace (images via
+  // the bumped version, markdown's local images via a fresh cap on re-render).
+  // Runs only when the hint actually changed: previewOpen/previewTitle
+  // transitions (image open/switch) must not re-issue the cap request or
+  // remount the view.
   useEffect(() => {
     if (prevHintRef.current === hint) return;
     prevHintRef.current = hint;
-    if (!hint || !previewOpen || classifyPreviewKind(previewTitle) !== "image") return;
+    const kind = classifyPreviewKind(previewTitle);
+    if (!hint || !previewOpen || (kind !== "image" && kind !== "markdown")) return;
     setImageCap(null);
-    setImageVersion((v) => v + 1);
+    if (kind === "image") setImageVersion((v) => v + 1);
     capCache.invalidate(hint);
     capCache.getCap(hint).then(setImageCap).catch((err: any) => setPreviewError(err?.message ?? String(err)));
   }, [hint, previewOpen, previewTitle]);

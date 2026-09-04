@@ -103,3 +103,16 @@ test("rejects absolute and traversal markdown paths", () => {
   assert.equal(workspaceResourceUrl("/workspace", "docs/%5c%2e%2e%5coutside/README.md", "img.png"), null);
   assert.equal(workspaceResourceUrl("/workspace", "%2fabsolute/README.md", "img.png"), null);
 });
+
+test("sanitize strips onerror from a raw-HTML img with a safe local src", () => {
+  const source = '<img src="images/a.png" onerror="alert(1)">';
+  const { html, blockedExternalImages } = renderMarkdown(source, {
+    filePath: "docs/README.md",
+    workspaceHint: "/workspace",
+    resourceUrl: (resource) => rawMarkdownImageUrl("/workspace", "docs/README.md", resource, "cap123"),
+  });
+  assert.equal(blockedExternalImages, 0, "a workspace-local raw-HTML src is safe, not blocked");
+  assert.ok(html.includes("/filemanager-fs/raw?"), "local image should render via its raw URL");
+  assert.ok(html.includes("cap123"), "raw URL should carry the capability token");
+  assert.equal(/onerror/i.test(html), false, "sanitizer must strip the onerror attribute");
+});
