@@ -164,6 +164,15 @@ describe("POST /filemanager-fs/delete", () => {
   it("refuses workspace root, .git and escapes", async () => {
     const rootRes = await request(handler, q(""), hdr, "POST");
     assert.equal(rootRes.status, 403);
+    // normalized-root aliases must 403 too: resolve(root, ".") === root and
+    // resolve(root, "a.txt/..") === root, which would otherwise reach
+    // deleteRecursive(root) and wipe the whole workspace
+    const dotRes = await request(handler, q("."), hdr, "POST");
+    assert.equal(dotRes.status, 403);
+    const dotDotFile = await request(handler, q("a.txt/.."), hdr, "POST");
+    assert.equal(dotDotFile.status, 403);
+    const dotDotDir = await request(handler, q("sub/.."), hdr, "POST");
+    assert.equal(dotDotDir.status, 403);
     const gitRes = await request(handler, q(".git"), hdr, "POST");
     assert.equal(gitRes.status, 403);
     const esc = await request(handler, q("../outside.txt"), hdr, "POST");

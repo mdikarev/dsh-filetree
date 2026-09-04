@@ -429,6 +429,10 @@ async function deletePathEntry(root: string, relPath: string): Promise<boolean> 
     current = next;
   }
   const target = join(current, segments[segments.length - 1]!);
+  if (target === root) {
+    // "." / "<dir>/.." normalize to the root: never reach deleteRecursive(root).
+    throw Object.assign(new Error("cannot delete workspace root"), { expose: "cannot delete workspace root" });
+  }
   const st = await lstat(target).catch(() => null);
   if (!st) return false;
   if (st.isSymbolicLink()) await unlink(target);
@@ -621,6 +625,11 @@ export function createHandler(defaultRoot: string, options: CreateHandlerOptions
           const target = resolve(root, relPath);
           if (!isInside(root, target)) {
             return send(res, 403, { error: "path escapes workspace" });
+          }
+          if (target === root) {
+            // resolve() normalizes "." and "<entry>/.." to the root itself;
+            // reject before any fs work so deleteRecursive(root) is unreachable.
+            return send(res, 403, { error: "cannot delete workspace root" });
           }
           if (hasGitSegment(relPath)) {
             return send(res, 403, { error: "cannot delete .git" });
