@@ -142,10 +142,11 @@ describe("capability issuer", () => {
     assert.equal(cap.isValid("/ws/a", "tok2"), false);
   });
   it("rotates on every issueFor: only the newest token is valid", () => {
-    const cap = createCapabilityIssuer({ randomToken: () => "rot1" });
+    let i = 0;
+    const cap = createCapabilityIssuer({ randomToken: () => (i += 1) === 1 ? "old" : "new" });
     cap.issueFor("/ws/a");
     const fresh = cap.issueFor("/ws/a");
-    assert.equal(cap.isValid("/ws/a", "rot1"), false);
+    assert.equal(cap.isValid("/ws/a", "old"), false);
     assert.equal(cap.isValid("/ws/a", fresh), true);
   });
   it("expires tokens after ttlMs", () => {
@@ -189,8 +190,10 @@ export interface CapabilityIssuerOptions {
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a, "hex");
-  const bb = Buffer.from(b, "hex");
+  // Opaque compare: tokens are hex in production but injected fakes in tests
+  // are arbitrary strings; decode utf8 so equal non-hex tokens validate too.
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
   return ab.length > 0 && ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
