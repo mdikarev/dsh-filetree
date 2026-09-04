@@ -986,7 +986,11 @@ export interface MarkdownRenderOptions {
 export interface MarkdownRenderResult {
   html: string;
   blockedExternalImages: number;
-  // NOTE: unavailableLocalImages is removed this cycle.
+  // TRANSITIONAL (controller ruling R-01): kept as a zeroed field until
+  // Task 11 removes it from Panel.tsx types together with the dead warning UI.
+  // Removing it at Task 7 would break Panel typecheck (it spreads
+  // renderMarkdown into PreviewPresentation, which still declares the field).
+  unavailableLocalImages: number;
 }
 // Pure; shares the containment checks with workspaceResourceUrl:
 export function rawMarkdownImageUrl(hint: string, markdownPath: string, resource: string, cap: string): string | null;
@@ -1110,7 +1114,7 @@ with:
   });
 ```
 
-- Remove `unavailableLocalImages` from `MarkdownRenderResult`, stop incrementing it, and return only `{ html, blockedExternalImages }`.
+- Stop incrementing `unavailableLocalImages`; keep it in `MarkdownRenderResult` as a zeroed transitional field (R-01): return `{ html, blockedExternalImages, unavailableLocalImages: 0 }`. Task 11 removes the field everywhere (markdown-preview.ts, Panel types, dead UI).
 - Keep the `sanitize()` config unchanged. In Step 4 verify the absolute path `/filemanager-fs/raw?...` (no scheme) survives DOMPurify; only if a test proves it is stripped, extend the DOMPurify config with an `ALLOWED_URI_REGEXP` matching `^\\/filemanager-fs\\/raw\\?`.
 
 - [ ] **Step 4: Run tests to verify they pass**
