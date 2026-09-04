@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-04
+
 ### Added
 
 - Image preview in the file dock: raster (png/jpeg/gif/webp/avif) and svg
@@ -27,11 +29,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST /filemanager-fs/delete` (header-gated, POST-only, symlink-safe,
   workspace root and `.git` protected)
 
+### Changed
+
+- Drag-and-drop of tree rows into the composer uses the host editor's native
+  text/plain drop, so it works with the Lexical composer on dsh >= 0.1.2
+  (textarea hosts keep working too)
+- Image zoom is controlled by toolbar buttons and double-click; the mouse
+  wheel is never hijacked
+- Tree context menu closes when the pointer leaves the source row (and not
+  on chat scroll updates); opening is right-click or the Menu key
+
+### Fixed
+
+- Deleting the workspace root through normalized aliases (`.`, `x/..`) is
+  rejected before any filesystem work
+
 ### Security
 
 - Image bytes are served only to URLs carrying an unguessable, expiring
   per-workspace capability token; all other endpoints keep the
   `x-dsh-filemanager` header gate
+- Deletion (`POST /filemanager-fs/delete`) is POST-only, header-gated,
+  symlink-safe, and protects the workspace root and `.git`
 
 ## [0.2.0] - 2026-09-03
 
