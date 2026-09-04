@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isMarkdownFile, renderMarkdown, workspaceResourceUrl } from "../src/markdown-preview.ts";
+import { isMarkdownFile, rawMarkdownImageUrl, renderMarkdown, workspaceResourceUrl } from "../src/markdown-preview.ts";
 
 test("recognizes markdown files case-insensitively", () => {
   assert.equal(isMarkdownFile("README.md"), true);
@@ -26,19 +26,36 @@ test("escapes raw HTML and blocks dangerous links", () => {
   assert.equal(html.toLowerCase().includes('href="javascript:'), false);
 });
 
-test("removes external images and counts them", () => {
+test("removes external images and counts them; local images render via resourceUrl", () => {
   const source = ["![remote](https://example.com/a.png)", "", "![local](images/a.png)"].join(String.fromCharCode(10));
-  const { html, blockedExternalImages } = renderMarkdown(source, { filePath: "docs/README.md", workspaceHint: "/workspace" });
+  const { html, blockedExternalImages } = renderMarkdown(source, {
+    filePath: "docs/README.md",
+    workspaceHint: "/workspace",
+    resourceUrl: (resource) => rawMarkdownImageUrl("/workspace", "docs/README.md", resource, "cap123"),
+  });
   assert.equal(blockedExternalImages, 1);
   assert.equal(html.includes("example.com"), false);
-  assert.equal(html.includes("filemanager-fs/read"), false);
-  assert.equal(html.includes("images/a.png"), false);
+  assert.ok(html.includes("/filemanager-fs/raw?"));
 });
 
-test("reports unavailable local images instead of emitting JSON read URLs", () => {
-  const { html, unavailableLocalImages } = renderMarkdown("![local](images/a.png)", { filePath: "docs/README.md", workspaceHint: "/workspace" });
-  assert.equal(unavailableLocalImages, 1);
-  assert.equal(html.includes("filemanager-fs/read"), false);
+test("emits raw URLs for safe local images when resourceUrl is provided", () => {
+  const { html, blockedExternalImages } = renderMarkdown("![local](images/a.png)", {
+    filePath: "docs/README.md",
+    workspaceHint: "/workspace",
+    resourceUrl: (resource) => rawMarkdownImageUrl("/workspace", "docs/README.md", resource, "cap123"),
+  });
+  assert.equal(blockedExternalImages, 0);
+  assert.ok(html.includes("/filemanager-fs/raw?"));
+  assert.ok(html.includes("cap123"));
+  assert.ok(html.includes('alt="local"'));
+});
+
+test("rawMarkdownImageUrl applies the same containment checks as workspaceResourceUrl", () => {
+  assert.equal(rawMarkdownImageUrl("/ws", "README.md", "../etc/passwd", "c"), null);
+  assert.equal(rawMarkdownImageUrl("/ws", "README.md", "http://evil/x.png", "c"), null);
+  assert.equal(rawMarkdownImageUrl("/ws", "README.md", "a/../../b.png", "c"), null);
+  assert.ok(rawMarkdownImageUrl("/ws", "docs/guide.md", "img/x.png", "c")?.includes("path=docs%2Fimg%2Fx.png"));
+  assert.ok(rawMarkdownImageUrl("/ws", "docs/guide.md", "./img/x.png", "c")?.includes("path=docs%2Fimg%2Fx.png"));
 });
 
 test("adds safe attributes to external text links", () => {

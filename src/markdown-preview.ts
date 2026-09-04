@@ -1,8 +1,23 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { buildRawFileUrl } from "./raw-url.js";
 
-interface MarkdownRenderOptions { filePath: string; workspaceHint: string }
-interface MarkdownRenderResult { html: string; blockedExternalImages: number; unavailableLocalImages: number }
+export interface MarkdownRenderOptions {
+  filePath: string;
+  workspaceHint: string;
+  /** When provided, safe workspace-local image resources are emitted as
+   *  <img src="...">; absent → local images stay stripped. */
+  resourceUrl?: (resource: string) => string | null;
+}
+export interface MarkdownRenderResult {
+  html: string;
+  blockedExternalImages: number;
+  // TRANSITIONAL (controller ruling R-01): kept as a zeroed field until
+  // Task 11 removes it from Panel.tsx types together with the dead warning UI.
+  // Removing it at Task 7 would break Panel typecheck (it spreads
+  // renderMarkdown into PreviewPresentation, which still declares the field).
+  unavailableLocalImages: number;
+}
 const READ_PATH = "/filemanager-fs/read";
 
 export function isMarkdownFile(name: string): boolean { return name.toLowerCase().endsWith(".md"); }
@@ -20,7 +35,8 @@ function isExternalUrl(value: string): boolean {
   try { const p = new URL(value.trim()); return p.protocol === "http:" || p.protocol === "https:"; } catch { return false; }
 }
 
-export function workspaceResourceUrl(hint: string, markdownPath: string, resource: string): string | null {
+// Pure; shares the containment checks with workspaceResourceUrl:
+function resolveWorkspaceResource(markdownPath: string, resource: string): string | null {
   const normalizedMarkdown = markdownPath.replaceAll("\\", "/");
   let decodedMarkdown: string;
   try { decodedMarkdown = decodeURIComponent(normalizedMarkdown); } catch { return null; }
@@ -34,7 +50,21 @@ export function workspaceResourceUrl(hint: string, markdownPath: string, resourc
   const directory = decodedMarkdown.includes("/") ? decodedMarkdown.slice(0, decodedMarkdown.lastIndexOf("/")) : "";
   const combined = [directory, decoded].filter(Boolean).join("/");
   if (combined === ".." || combined.startsWith("../") || combined.includes("/../")) return null;
+  // Normalize "." path segments ("./x", "a/./b"): the server resolves them
+  // identically, but generated URLs stay clean ("./img" -> "img").
+  return combined.split("/").filter((segment) => segment !== ".").join("/");
+}
+
+export function workspaceResourceUrl(hint: string, markdownPath: string, resource: string): string | null {
+  const combined = resolveWorkspaceResource(markdownPath, resource);
+  if (!combined) return null;
   return READ_PATH + "?" + new URLSearchParams({ hint, path: combined }).toString();
+}
+
+export function rawMarkdownImageUrl(hint: string, markdownPath: string, resource: string, cap: string): string | null {
+  const combined = resolveWorkspaceResource(markdownPath, resource);
+  if (!combined) return null;
+  return buildRawFileUrl(hint, combined, cap);
 }
 
 const NAMED_TEXT_ENTITIES: Record<string, string> = { colon: ":", tab: "\t", newline: "\n" };
@@ -68,13 +98,15 @@ function sanitize(html: string): string {
 
 export function renderMarkdown(source: string, options: MarkdownRenderOptions): MarkdownRenderResult {
   let blockedExternalImages = 0;
-  let unavailableLocalImages = 0;
   // marked has no html:false option (the old flag was a no-op); raw HTML
   // that passes through is handled by sanitize() below.
   let html = marked.parse(source, { gfm: true, breaks: false }) as string;
   html = html.replace(/<img\b([^>]*?)\bsrc=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, src, after) => {
     if (isExternalUrl(src) || isUnsafeUrl(src)) { blockedExternalImages += 1; return ""; }
-    unavailableLocalImages += 1;
+    if (options.resourceUrl) {
+      const url = options.resourceUrl(src.trim());
+      if (url) return '<img' + before + 'src="' + url + '"' + after + '>';
+    }
     return "";
   });
   html = html.replace(/<a\b([^>]*?)\bhref=(['"])(.*?)\2([^>]*)>/gi, (_full, before, quote, href, after) => {
@@ -88,5 +120,5 @@ export function renderMarkdown(source: string, options: MarkdownRenderOptions): 
     return "<a" + before + "href=\"#\"" + after + ">";
   });
   html = sanitize(html);
-  return { html, blockedExternalImages, unavailableLocalImages };
+  return { html, blockedExternalImages, unavailableLocalImages: 0 };
 }
