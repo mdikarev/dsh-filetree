@@ -18,6 +18,7 @@
 | 4 | **B** — live-refresh resilience | watchdog for stalled SSE (server heartbeat + client inactivity) and setHint/poller correctness in Panel | spec drafted — `docs/superpowers/specs/2026-09-02-live-refresh-watchdog-design.md` | ☑ done - 2026-09-02, plan `docs/superpowers/plans/2026-09-02-live-refresh-watchdog.md` |
 | 5 | **G** — i18n + basic a11y | plugin-local en/ru i18n (EN default, RU preserved) + L1 a11y (tree semantics/keyboard, preview dialog/Esc, toggle button, focus styles) | spec drafted — `docs/superpowers/specs/2026-09-03-i18n-a11y-design.md` | ☑ done - 2026-09-03, plan `docs/superpowers/plans/2026-09-03-i18n-a11y.md` |
 | 6 | Release **0.2.0** | tags + GitHub Release + npm publish after A/B land and CI is green | 1–5 | ☑ done — published as `dsh-filetree@0.2.0`, GitHub Release v0.2.0 created |
+| 7 | **0.3.0 cycle** — image preview (standalone + in-Markdown) + JSON pretty view | preview of images in the dock and inside Markdown, JSON Raw/Formatted mode; new `/cap` + `/raw` endpoints | none | in progress — spec+plan 2026-09-04 (`docs/superpowers/specs/2026-09-04-image-json-preview-design.md`, `docs/superpowers/plans/2026-09-04-image-json-preview.md`) |
 
 ## Phase sketches (details per phase in chat)
 

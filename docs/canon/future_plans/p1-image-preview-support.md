@@ -22,6 +22,6 @@
 
 ---
 
-Status: draft
+Status: absorbed (2026-09-04) — реализовано циклом «image preview + JSON pretty view» (spec docs/superpowers/specs/2026-09-04-image-json-preview-design.md). Решения: транспорт — capability-URL (`/cap` + `/raw`), а не data-URL; standalone-просмотр — в существующей док-панели (fit + зум), локальные относительные изображения рендерятся внутри Markdown. Открытые вопросы закрыты в ARCHITECTURE (Public interfaces /cap,/raw; Key flows).
 Depends: текстовый предпросмотр реализован
 Unblocks: визуальные ревью изменений в репозитории

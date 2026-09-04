@@ -37,6 +37,18 @@ Per-handler серверный кэш снапшота git status --ignored по
 ### Композер (поле ввода чата)
 Поле ввода DeepSeek Harness Web GUI — карточка с data-атрибутом `data-composer-card`; контролируется per-session input machine, доступной плагинам через сервис `conversation` (`ctx.conversation.input.shell(sessionId)`). Drag-and-drop строк дерева вставляет `@`-упоминание пути именно сюда (src/drag-drop.ts).
 
+### Capability-токен (cap)
+Случайный 256-битный (32 байта hex) токен, выдаваемый `GET /filemanager-fs/cap` (header-гейт) на workspace-hint; TTL 8 ч, ротация на каждом issue. Авторизует `GET /filemanager-fs/raw` — единственный эндпоинт без header, т.к. plain `<img>` не может слать заголовки (src/capabilities.ts).
+
+### Raw-URL (/filemanager-fs/raw)
+URL изображения с query `hint/path/cap`: `/filemanager-fs/raw?hint=<enc>&path=<enc>&cap=<enc>[&v=<n>]`. Билдер — `buildRawFileUrl` (src/raw-url.ts); `v` форсирует перезагрузку после «Обновить» на confirmation banner.
+
+### Preview kind
+Классификация файла при клике в дереве: `image` | `markdown` | `json` | `text` (src/preview-kind.ts, `classifyPreviewKind`). image-расширения: png/jpg/jpeg/gif/webp/avif/svg (без учёта регистра).
+
+### JSON-режим (jsonMode)
+Режим показа `.json` в доке: `raw` (исходный текст) или `pretty` (форматированный с отступом 2 + подсветка); по умолчанию `pretty`, хранится per-workspace в localStorage (src/store.ts), решения — `formatJson` (src/json-view.ts).
+
 ## Naming conventions
 <!-- Record project-wide naming rules. -->
 

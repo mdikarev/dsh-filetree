@@ -12,7 +12,7 @@
 <!-- Table of initiative files and statuses. Zero rows is valid. -->
 
 | # | Initiative | Status | File |
-| 1 | Image preview support | draft | p1-image-preview-support.md |
+| 1 | Image preview support | absorbed | p1-image-preview-support.md |
 | 2 | Syntax highlighting in file viewer | absorbed | p2-syntax-highlighting-in-file-viewer.md |
 | 3 | Markdown preview toggle in file viewer | absorbed | p3-markdown-preview-toggle.md |
 | --- | --- | --- | --- |

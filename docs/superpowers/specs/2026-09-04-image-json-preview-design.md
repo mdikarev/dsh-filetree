@@ -1,6 +1,6 @@
 # Image Preview (standalone + in-Markdown) & JSON Pretty View — Design
 
-**Status:** draft (2026-09-04).
+**Status:** approved (2026-09-04).
 **Scope:** next release cycle after the 0.2.0 maturity roadmap (phases A/B/G done). (I1) preview of image files opened from the tree, plus rendering of workspace-local relative images inside the Markdown preview; (I2) JSON pretty view with a Raw/Pretty toggle. Absorbs the drafted future-plan `future_plans/p1-image-preview-support.md`.
 **Spec for:** next implementation plan (docs/superpowers/plans/); canon updates listed at the bottom.
 
