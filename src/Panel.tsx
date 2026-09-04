@@ -151,6 +151,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     hintRef.current = hint;
   }, [hint]);
 
+  // Previous hint, so the image-cap hint-change effect below runs only when
+  // the workspace hint actually changed (not on every image open/switch);
+  // mirrors the hintRef pattern above.
+  const prevHintRef = useRef(hint);
+
   // The live-refresh coordinator lives for the whole open panel; hint changes
   // are routed through coordinatorRef.current.setHint (see the effects below).
   const coordinatorRef = useRef<ReturnType<typeof createLiveRefreshCoordinator> | null>(null);
@@ -327,8 +332,12 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   }, [hint, store]);
 
   // When the hint changes with an image open, invalidate + refetch the cap
-  // and bump the version so the raw URL points at the new workspace.
+  // and bump the version so the raw URL points at the new workspace. Runs
+  // only when the hint actually changed: previewOpen/previewTitle transitions
+  // (image open/switch) must not re-issue the cap request or remount the view.
   useEffect(() => {
+    if (prevHintRef.current === hint) return;
+    prevHintRef.current = hint;
     if (!hint || !previewOpen || classifyPreviewKind(previewTitle) !== "image") return;
     setImageCap(null);
     setImageVersion((v) => v + 1);
