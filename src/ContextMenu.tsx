@@ -50,14 +50,14 @@ export function ContextMenu({ x, y, items, onClose, anchorRow }: ContextMenuProp
     };
   }, [onClose]);
 
-  // Close when the pointer leaves the source row — but NOT on page/chat
-  // scrolls (a chat update must not dismiss the menu). A short grace covers
-  // the gap while the pointer travels from the row onto the menu itself.
+  // Close when the pointer is outside {source row ∪ menu} — but NOT on
+  // page/chat scrolls (a chat update must not dismiss the menu). Pointer-move
+  // tracking on the document is robust even when the source row re-renders
+  // (row mouseleave can be missed crossing the panel boundary into the chat).
+  // A short grace lets the pointer travel from the row onto the menu itself.
   useEffect(() => {
     if (!anchorRow) return;
-    const menu = ref.current;
     let grace: number | null = null;
-    let ptr = { x: -1, y: -1 };
 
     const insideAnchorOrMenu = (node: Node | null | undefined): boolean => {
       if (!node) return false;
@@ -69,28 +69,34 @@ export function ContextMenu({ x, y, items, onClose, anchorRow }: ContextMenuProp
       if (grace !== null) { window.clearTimeout(grace); grace = null; }
     };
 
-    const onPointerMove = (event: PointerEvent): void => {
-      ptr = { x: event.clientX, y: event.clientY };
-      if (grace !== null && insideAnchorOrMenu(event.target as Node)) cancelGrace();
-    };
-
-    const onMouseLeave = (event: MouseEvent): void => {
-      // Moving straight onto the menu (or back onto the row) keeps it open.
-      if (insideAnchorOrMenu(event.relatedTarget as Node)) return;
-      cancelGrace();
+    const scheduleClose = (): void => {
+      if (grace !== null) return;
       grace = window.setTimeout(() => {
         grace = null;
-        const el = document.elementFromPoint(ptr.x, ptr.y);
-        if (el && insideAnchorOrMenu(el)) return; // pointer is on the menu now
+        // Re-check where the pointer is NOW (it may have reached the menu).
+        const el = document.elementFromPoint(lastX, lastY);
+        if (el && insideAnchorOrMenu(el)) return;
         onClose();
-      }, 150);
+      }, 120);
     };
 
-    anchorRow.addEventListener("mouseleave", onMouseLeave);
+    // Keep the last known pointer position for the timer re-check.
+    let lastX = -1;
+    let lastY = -1;
+
+    const onPointerMove = (event: PointerEvent): void => {
+      lastX = event.clientX;
+      lastY = event.clientY;
+      if (insideAnchorOrMenu(event.target as Node)) {
+        cancelGrace(); // over the row or the menu again
+      } else {
+        scheduleClose();
+      }
+    };
+
     window.addEventListener("pointermove", onPointerMove, true);
     return () => {
       cancelGrace();
-      anchorRow.removeEventListener("mouseleave", onMouseLeave);
       window.removeEventListener("pointermove", onPointerMove, true);
     };
   }, [anchorRow, onClose]);
