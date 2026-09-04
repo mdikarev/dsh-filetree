@@ -15,4 +15,5 @@
 | 1 | Image preview support | absorbed | p1-image-preview-support.md |
 | 2 | Syntax highlighting in file viewer | absorbed | p2-syntax-highlighting-in-file-viewer.md |
 | 3 | Markdown preview toggle in file viewer | absorbed | p3-markdown-preview-toggle.md |
+| 4 | Delete files/folders via tree context menu | draft | p4-file-deletion-context-menu.md |
 | --- | --- | --- | --- |
