@@ -282,6 +282,47 @@ function getEntryStatuses(
   };
 }
 
+// --- delete-info preflight helpers (GET /filemanager-fs/delete-info) ---
+
+type ResolvedEntryKind = "file" | "dir" | "symlink-file" | "symlink-dir";
+
+const UNCOMMITTED = new Set<GitStatus>(["modified", "added", "untracked"]);
+
+async function resolveEntryKind(root: string, relPath: string): Promise<ResolvedEntryKind | null> {
+  const target = resolve(root, relPath);
+  if (!isInside(root, target)) return null; // caller maps to 403/404
+  const st = await lstat(target).catch(() => null);
+  if (!st) return null;
+  if (st.isSymbolicLink()) {
+    const linkStat = await stat(target).catch(() => null);
+    if (!linkStat) return null;
+    return linkStat.isDirectory() ? "symlink-dir" : "symlink-file";
+  }
+  if (st.isDirectory()) return "dir";
+  if (st.isFile()) return "file";
+  return null;
+}
+
+function isUncommittedStatus(status: GitStatus | undefined): boolean {
+  return status !== undefined && UNCOMMITTED.has(status);
+}
+
+/** True when the entry itself (file) or any existing descendant (dir) carries
+ *  an uncommitted git status; ignored rows never count. */
+function entryUncommitted(gitMap: Map<string, GitEntry>, relPath: string, isDir: boolean): boolean {
+  const normalized = normalizeGitPath(relPath).replace(/\/+$/, "");
+  const self = gitMap.get(normalized) ?? gitMap.get(normalized + "/");
+  if (isDir) {
+    const prefix = normalized ? normalized + "/" : "";
+    for (const [path, entry] of gitMap.entries()) {
+      if (path === normalized || path === normalized + "/") continue;
+      if ((!prefix || path.startsWith(prefix)) && entry.status !== "ignored" && isUncommittedStatus(entry.status)) return true;
+    }
+    return false;
+  }
+  return isUncommittedStatus(self?.status);
+}
+
 async function serveRawImage(
   res: ServerResponse,
   root: string,
@@ -494,6 +535,36 @@ export function createHandler(defaultRoot: string, options: CreateHandlerOptions
         }
         case "events":
           return eventsHandler(req, res);
+
+        // Read-only preflight for deletion: reports the entry kind, whether it
+        // is the workspace root, and whether it (file) or any existing
+        // descendant (dir) carries an uncommitted git status (modified /
+        // added / untracked; ignored never counts). gitStatus is included for
+        // files that have a direct row; for dirs the aggregate `uncommitted`
+        // is the contract the UI uses, so a dir row is not forced here.
+        // `root` was already resolved above the switch.
+        case "delete-info": {
+          const relPath = url.searchParams.get("path") ?? "";
+          const target = resolve(root, relPath);
+          if (!isInside(root, target)) {
+            return send(res, 403, { error: "path escapes workspace" });
+          }
+          const kind = await resolveEntryKind(root, relPath);
+          if (kind === null) {
+            return send(res, 404, { error: "not found" });
+          }
+          const gitMap = await gitCache.get(root);
+          const isDir = kind === "dir" || kind === "symlink-dir";
+          const gitStatus = gitMap.get(normalizeGitPath(relPath).replace(/\/+$/, ""))?.status;
+          return send(res, 200, {
+            kind,
+            name: basename(target),
+            path: relPath,
+            isRoot: relPath.length === 0,
+            uncommitted: entryUncommitted(gitMap, relPath, isDir),
+            ...(gitStatus !== undefined && gitStatus !== null ? { gitStatus } : {}),
+          });
+        }
 
         default:
           return send(res, 404, { error: `unknown action: ${action}` });
