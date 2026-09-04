@@ -19,10 +19,11 @@ A toggle handle at the sidebar edge opens a 300 px panel showing the directory t
 - **Truncated names**: hovering a row whose name is clipped shows a themed tooltip with the full name (only when truncated).
 - **i18n**: UI copy is localized — English by default, Russian auto-selected for ru-locale browsers (override: `fm-locale` in localStorage).
 - **Accessibility**: tree semantics (roles/`aria-expanded`/`aria-level`), full keyboard navigation (arrows, Home/End, Enter/Space, ArrowLeft/Right on folders), the preview is a dialog and closes on Escape, visible focus styles.
+- **Context-menu delete**: tree rows get a context menu (right-click or Menu key) with Delete; deletion is confirmed in an inline dialog that warns about uncommitted git changes; files and folders (recursively) can be deleted, symlinks are removed as links; the workspace root and `.git` are protected.
 
 ## Scope
 
-The panel is **read-only**: it browses and previews files and never mutates them. File operations (create/rename/delete/move) are intentionally out of scope.
+The panel is **read-only**, except explicit confirmed deletion of files/folders via the tree's context menu: it browses and previews files and never mutates them otherwise. File operations (create/rename/move) are intentionally out of scope.
 
 ## Server API
 
@@ -34,6 +35,8 @@ The plugin registers a `/filemanager-fs` prefix on the DSH host:
 - `GET /filemanager-fs/events?hint=<workspace>&paths=<json>` — SSE stream of workspace changes (and `git-changed` events), with a heartbeat
 - `GET /filemanager-fs/cap?hint=<workspace>` — mints an unguessable, expiring per-workspace capability token used to authorize image URLs
 - `GET /filemanager-fs/raw?hint=<workspace>&path=<rel>&cap=<token>` — serves image bytes to capability URLs (byte caps: 20 MB raster / 2 MB svg; `nosniff`/`no-store`)
+- `GET /filemanager-fs/delete-info?hint=<workspace>&path=<rel>` — read-only preflight for deletion: entry kind, whether it is the workspace root, and whether the file (or any descendant of a folder) carries uncommitted git changes (403 path escape / 404 not found)
+- `POST /filemanager-fs/delete?hint=<workspace>&path=<rel>` — permanently deletes the file or folder, recursively (header-gated and POST-only); symlinks are removed as links; the workspace root and `.git` are rejected (403/404/409)
 
 All endpoints except `GET /filemanager-fs/raw` require the `x-dsh-filemanager: 1` header. `/raw` is the only endpoint reachable without it — capability URLs must work as plain `<img>` sources and inside the Markdown preview — and authenticates via the token from `/cap`. Paths are contained to the workspace (realpath + escape checks, symlink-safe), and git is invoked read-only.
 

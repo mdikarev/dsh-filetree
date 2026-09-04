@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server capability endpoint `GET /filemanager-fs/cap` and image endpoint
   `GET /filemanager-fs/raw` (byte caps 20 MB raster / 2 MB svg;
   nosniff/no-store)
+- Tree row context menu (right-click or Menu key) with Delete; inline
+  confirmation dialog warns about uncommitted git changes inside the
+  deleted file/folder before the destructive action
+- Server actions `GET /filemanager-fs/delete-info` (read-only preflight) and
+  `POST /filemanager-fs/delete` (header-gated, POST-only, symlink-safe,
+  workspace root and `.git` protected)
 
 ### Security
 
