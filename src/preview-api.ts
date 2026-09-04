@@ -21,3 +21,12 @@ export function fetchFile(hint: string, path: string): Promise<ReadResponse> {
   const url = `/filemanager-fs/read?hint=${encodeURIComponent(hint)}&path=${encodeURIComponent(path)}`;
   return fetchJson<ReadResponse>(url);
 }
+
+export interface CapResponse {
+  cap: string;
+}
+
+export function fetchCap(hint: string): Promise<string> {
+  const url = "/filemanager-fs/cap?hint=" + encodeURIComponent(hint);
+  return fetchJson<CapResponse>(url).then((data) => data.cap);
+}
