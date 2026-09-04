@@ -15,7 +15,7 @@ interface TreeNodeProps {
   path: string;
   onError: (msg: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
-  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }) => void;
+  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }, anchor: HTMLElement) => void;
   store: FileManagerStore;
   registerReload: (path: string, reload: (() => void) | null) => void;
 }
@@ -175,7 +175,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
     if (key === "ContextMenu" || (e.shiftKey && key === "F10")) {
       e.preventDefault();
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: rect.left, y: rect.bottom });
+      onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: rect.left, y: rect.bottom }, e.currentTarget as HTMLElement);
       return;
     }
     if (key === "Enter" || key === " ") {
@@ -281,7 +281,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
         onKeyDown={handleRowKeyDown}
         onContextMenu={(event) => {
           event.preventDefault();
-          onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: event.clientX, y: event.clientY });
+          onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: event.clientX, y: event.clientY }, event.currentTarget as HTMLElement);
         }}
         draggable
         onMouseDown={hideFullNameTip}
@@ -348,7 +348,7 @@ interface TreeProps {
   entries: Entry[];
   onError: (msg: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
-  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }) => void;
+  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }, anchor: HTMLElement) => void;
   store: FileManagerStore;
 }
 

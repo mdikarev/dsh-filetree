@@ -14,11 +14,14 @@ export interface ContextMenuProps {
   y: number;
   items: ContextMenuItem[];
   onClose: () => void;
+  /** The tree row the menu was opened from; leaving it with the pointer
+   *  (unless the pointer is on the menu) closes the menu. */
+  anchorRow?: HTMLElement | null;
 }
 
 const MENU_MARGIN = 6;
 
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+export function ContextMenu({ x, y, items, onClose, anchorRow }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   // Clamp to the viewport after mount so long menus / edge anchors stay visible.
@@ -39,16 +42,58 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.stopPropagation(); onClose(); }
     };
-    const onScroll = () => onClose();
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", onScroll, true);
     };
   }, [onClose]);
+
+  // Close when the pointer leaves the source row — but NOT on page/chat
+  // scrolls (a chat update must not dismiss the menu). A short grace covers
+  // the gap while the pointer travels from the row onto the menu itself.
+  useEffect(() => {
+    if (!anchorRow) return;
+    const menu = ref.current;
+    let grace: number | null = null;
+    let ptr = { x: -1, y: -1 };
+
+    const insideAnchorOrMenu = (node: Node | null | undefined): boolean => {
+      if (!node) return false;
+      if (ref.current && ref.current.contains(node)) return true;
+      return anchorRow.contains(node);
+    };
+
+    const cancelGrace = (): void => {
+      if (grace !== null) { window.clearTimeout(grace); grace = null; }
+    };
+
+    const onPointerMove = (event: PointerEvent): void => {
+      ptr = { x: event.clientX, y: event.clientY };
+      if (grace !== null && insideAnchorOrMenu(event.target as Node)) cancelGrace();
+    };
+
+    const onMouseLeave = (event: MouseEvent): void => {
+      // Moving straight onto the menu (or back onto the row) keeps it open.
+      if (insideAnchorOrMenu(event.relatedTarget as Node)) return;
+      cancelGrace();
+      grace = window.setTimeout(() => {
+        grace = null;
+        const el = document.elementFromPoint(ptr.x, ptr.y);
+        if (el && insideAnchorOrMenu(el)) return; // pointer is on the menu now
+        onClose();
+      }, 150);
+    };
+
+    anchorRow.addEventListener("mouseleave", onMouseLeave);
+    window.addEventListener("pointermove", onPointerMove, true);
+    return () => {
+      cancelGrace();
+      anchorRow.removeEventListener("mouseleave", onMouseLeave);
+      window.removeEventListener("pointermove", onPointerMove, true);
+    };
+  }, [anchorRow, onClose]);
 
   const focusFirst = (el: HTMLDivElement | null) => { el?.focus(); };
 

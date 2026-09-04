@@ -118,7 +118,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // Tree-row context menu (right-click / Menu key) + the delete flow it
   // triggers: pending delete target, then preflight info, busy and error for
   // the confirmation dialog (see handleConfirmDelete and the dialog render).
-  const [contextMenu, setContextMenu] = useState<{ path: string; name: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ path: string; name: string; x: number; y: number; anchor: HTMLElement | null } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string } | null>(null);
   // Delete-confirmation dialog: preflight delete-info for the pending target,
   // in-flight busy flag and localized error surfaced inside the dialog.
@@ -633,7 +633,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               onError={handleError}
               store={store}
               onOpenFile={handleOpenFile}
-              onRowContextMenu={(path, name, _kind, point) => setContextMenu({ path, name, x: point.x, y: point.y })}
+              onRowContextMenu={(path, name, _kind, point, anchor) => setContextMenu({ path, name, x: point.x, y: point.y, anchor })}
             />
           )}
         </div>
@@ -643,6 +643,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          anchorRow={contextMenu.anchor}
           onClose={() => {
             setPendingDelete(null);
             setContextMenu(null);
