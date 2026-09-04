@@ -6,6 +6,7 @@ import { isMarkdownFile, rawMarkdownImageUrl, renderMarkdown } from "./markdown-
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
+import { ContextMenu } from "./ContextMenu.js";
 import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
 import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
@@ -110,6 +111,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [error, setError] = useState("");
   // True while the polling fallback is active (SSE unavailable).
   const [liveFallback, setLiveFallback] = useState(false);
+
+  // Tree-row context menu (right-click / Menu key) + pending delete target
+  // (Task 6 wires the confirm dialog and the delete call from pendingDelete).
+  const [contextMenu, setContextMenu] = useState<{ path: string; name: string; x: number; y: number } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string } | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -575,10 +581,34 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               onError={handleError}
               store={store}
               onOpenFile={handleOpenFile}
+              onRowContextMenu={(path, name, _kind, point) => setContextMenu({ path, name, x: point.x, y: point.y })}
             />
           )}
         </div>
       </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => {
+            setPendingDelete(null);
+            setContextMenu(null);
+          }}
+          items={[
+            {
+              id: "delete",
+              label: t("deleteMenuItem"),
+              danger: true,
+              onSelect: () => {
+                // Task 6 wires the confirm dialog; for now only clear + keep a
+                // pending marker so the flow compiles green at this commit.
+                setPendingDelete({ path: contextMenu.path, name: contextMenu.name });
+              },
+            },
+          ]}
+        />
+      )}
 
       {previewOpen && (
         <div

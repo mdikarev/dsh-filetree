@@ -298,6 +298,37 @@ body[data-ds-dark-theme] {
   margin-left: 16px;
 }
 
+/* Row context menu (fixed-position, see src/ContextMenu.tsx) */
+.fm-context-menu {
+  position: fixed;
+  z-index: 2147483645;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--fm-border-strong);
+  border-radius: 8px;
+  background: var(--fm-surface-elevated);
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.18);
+}
+.fm-context-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.fm-context-menu-item:hover,
+.fm-context-menu-item:focus-visible {
+  background: var(--fm-hover);
+}
+.fm-context-menu-item--danger {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /* Тултип полного имени для обрезанной строки (рендерится на <body>,
    см. src/tooltip.ts: .fm-panel transform/clip режет fixed-потомков). */
 .fm-name-tooltip {

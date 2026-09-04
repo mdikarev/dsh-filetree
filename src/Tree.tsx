@@ -15,6 +15,7 @@ interface TreeNodeProps {
   path: string;
   onError: (msg: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
+  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }) => void;
   store: FileManagerStore;
   registerReload: (path: string, reload: (() => void) | null) => void;
 }
@@ -35,7 +36,7 @@ export function getFileIconVariant(name: string): FileIconVariant {
   return "default";
 }
 
-function TreeNode({ level, entry, hint, path, onError, onOpenFile, store, registerReload }: TreeNodeProps) {
+function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextMenu, store, registerReload }: TreeNodeProps) {
   const [children, setChildren] = useState<Entry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [, forceUpdate] = useState({});
@@ -171,6 +172,12 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, store, regist
 
   const handleRowKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     const key = e.key;
+    if (key === "ContextMenu" || (e.shiftKey && key === "F10")) {
+      e.preventDefault();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: rect.left, y: rect.bottom });
+      return;
+    }
     if (key === "Enter" || key === " ") {
       e.preventDefault();
       handleToggle();
@@ -272,6 +279,10 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, store, regist
         {...(isDir ? { "aria-expanded": expanded } : {})}
         onClick={handleToggle}
         onKeyDown={handleRowKeyDown}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onRowContextMenu?.(fullPath, entry.name, entry.kind, { x: event.clientX, y: event.clientY });
+        }}
         draggable
         onMouseDown={hideFullNameTip}
         onMouseEnter={scheduleFullNameTip}
@@ -321,6 +332,7 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, store, regist
               path={fullPath}
               onError={onError}
               store={store} onOpenFile={onOpenFile}
+              onRowContextMenu={onRowContextMenu}
               registerReload={registerReload}
             />
           ))}
@@ -336,6 +348,7 @@ interface TreeProps {
   entries: Entry[];
   onError: (msg: string) => void;
   onOpenFile: (fullPath: string, entry: Entry) => void;
+  onRowContextMenu?: (path: string, name: string, kind: string, point: { x: number; y: number }) => void;
   store: FileManagerStore;
 }
 
@@ -347,7 +360,7 @@ export interface TreeHandle {
   refreshPaths(paths: string[]): void;
 }
 
-export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ label, hint, entries, onError, onOpenFile, store }, ref) {
+export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ label, hint, entries, onError, onOpenFile, onRowContextMenu, store }, ref) {
   const { t } = useL10n();
   const reloadersRef = useRef<Map<string, () => void>>(new Map());
 
@@ -402,6 +415,7 @@ export const Tree = forwardRef<TreeHandle, TreeProps>(function Tree({ label, hin
           path=""
           onError={onError}
           store={store} onOpenFile={onOpenFile}
+          onRowContextMenu={onRowContextMenu}
           registerReload={registerReload}
         />
       ))}

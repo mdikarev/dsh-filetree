@@ -45,6 +45,7 @@ const en = {
   jsonParseNote: "Invalid JSON — showing the raw source.",
   jsonTooLargeNote: "File too large to format — showing the raw source.",
   fileTruncated: "File truncated at 5 MB; not all content is shown.",
+  deleteMenuItem: "Delete…",
 } as const;
 
 export type L10nKey = keyof typeof en;
@@ -82,6 +83,7 @@ const ru: Record<L10nKey, string> = {
   jsonParseNote: "Некорректный JSON — показан исходный текст.",
   jsonTooLargeNote: "Файл слишком велик для форматирования — показан исходный текст.",
   fileTruncated: "Файл усечён до 5 МБ; показано не всё содержимое.",
+  deleteMenuItem: "Удалить…",
 };
 
 export function detectLocale(navigatorLanguage: string, stored: string | null): Locale {
