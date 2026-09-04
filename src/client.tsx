@@ -9,7 +9,7 @@ import { attachBrowserLocaleSync } from "./l10n.js";
 // Services this client plugin depends on; the loader derives the plugin
 // fiber's injection list from this module's `inject` export (package.json's
 // dsh.client.inject only shapes the module graph, not service injection).
-export const inject = ["slots", "workspaces", "sessions", "conversation"];
+export const inject = ["slots", "workspaces", "sessions"];
 
 import {
   DRAG_MIME,
@@ -17,9 +17,8 @@ import {
   parseDragPayload,
   buildDragMention,
   installDragDropListeners,
-  insertMentionIntoInput,
-  restoreCaretOnFrame,
 } from "./drag-drop.js";
+import { computeWorkspaceState, type WorkspaceState } from "./workspace-state.js";
 
 const CSS_TAG_ID = "dsh-filemanager-css";
 
@@ -55,52 +54,6 @@ function useStore(): { open: boolean; toggle: () => void; close: () => void } {
   };
 }
 
-// Compute workspace state from DSH context
-interface WorkspaceState {
-  status: "loading" | "ready" | "empty";
-  hint?: string;
-}
-
-function getCurrentSessionId(sessions: any): string | undefined {
-  try {
-    return sessions?.list?.getSnapshot()?.current;
-  } catch {
-    return undefined;
-  }
-}
-
-function computeWorkspaceState(workspaces: any, sessions: any): WorkspaceState {
-  const list = workspaces?.list;
-  if (list === undefined) return { status: "ready" };
-  
-  const s = list.getSnapshot();
-  if (!s || s.state === "loading" || s.baselinesReady !== true) {
-    return { status: "loading" };
-  }
-  
-  const items = s.items;
-  if (!Array.isArray(items) || items.length === 0) {
-    return { status: "empty" };
-  }
-
-  // Find workspace for current session
-  let current: any;
-  try {
-    const sesSnap = sessions?.list?.getSnapshot();
-    const curId = sesSnap?.current;
-    if (curId !== undefined) {
-      current = items.find(
-        (w: any) => Array.isArray(w.sessionIds) && w.sessionIds.includes(curId)
-      );
-    }
-  } catch {}
-
-  const chosen = current ?? items.find((w: any) => w.workspaceId === s.recentWorkspaceId) ?? items[0];
-  return typeof chosen?.path === "string" 
-    ? { status: "ready", hint: chosen.path } 
-    : { status: "ready" };
-}
-
 // Main component that wraps ToggleTab + Panel
 function FileManager({ workspaces, sessions }: any) {
   const { open, toggle: doToggle, close: doClose } = useStore();
@@ -112,7 +65,13 @@ function FileManager({ workspaces, sessions }: any) {
 
   // Subscribe to workspace/session changes
   useEffect(() => {
-    const update = () => setWs(computeWorkspaceState(workspaces, sessions));
+    const update = () => {
+      setWs((prev) => {
+        const next = computeWorkspaceState(workspaces, sessions, prev.hint);
+        if (next.status === prev.status && next.hint === prev.hint) return prev;
+        return next;
+      });
+    };
     const offs: Array<() => void> = [];
     
     if (workspaces?.list !== undefined) {
@@ -166,30 +125,6 @@ export function apply(ctx: any): void {
     },
     composerCard: (target) =>
       target instanceof Element ? target.closest("[data-composer-card]") : null,
-    onDropMention: (mention, card) => {
-      try {
-        const sessionId = getCurrentSessionId(ctx.sessions);
-        if (sessionId === undefined) return;
-        const shell = ctx.conversation?.input?.shell?.(sessionId);
-        if (!shell) return;
-        const state = shell.state?.getSnapshot?.();
-        const textarea = card.querySelector("textarea");
-        // Blocked/inert composers (no workspace, plugin block, busy) must not
-        // accept drops; the machine cannot observe those render-side states.
-        if (!textarea || textarea.disabled || textarea.readOnly) return;
-        const caret = insertMentionIntoInput({
-          setDraft: (text, editRange) => shell.setDraft(text, editRange),
-          draft: state?.draft ?? "",
-          phase: state?.phase ?? "plain",
-          selectionStart: textarea.selectionStart,
-          selectionEnd: textarea.selectionEnd,
-          mention,
-        });
-        if (caret !== null) restoreCaretOnFrame(textarea, caret);
-      } catch {
-        // A drop must never break the page — resolve errors silently.
-      }
-    },
   });
   ctx.effect?.(() => disposeDragDrop, "dsh-filemanager: drag-drop into composer");
 

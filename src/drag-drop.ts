@@ -143,14 +143,16 @@ export interface DragDropHandlers {
   mentionOf(dt: DataTransfer): string | undefined;
   /** The composer card under `target`, or `null` outside the composer. */
   composerCard(target: EventTarget | null): Element | null;
-  /** Insert the mention (the caller owns session/shell/textarea resolution). */
-  onDropMention(mention: string, card: Element, ev: DragEvent): void;
 }
 
 /**
  * Document-level capture listeners: allow the drop on the composer card and
- * insert the mention. Only our custom MIME triggers anything; OS file drags
- * and unrelated drags pass through untouched.
+ * toggle the hover highlight. The insertion itself is left to the HOST: the
+ * composer editor (textarea on older dsh hosts, Lexical contenteditable on
+ * 0.1.2+) inserts the drag's `text/plain` payload at the drop caret natively
+ * (the tree rows already put the @-mention into `text/plain`), so we must NOT
+ * preventDefault the drop. Only our custom MIME triggers the allow/highlight;
+ * OS file drags and unrelated drags pass through untouched.
  */
 export function installDragDropListeners(handlers: DragDropHandlers): () => void {
   let hintCard: Element | null = null;
@@ -183,13 +185,11 @@ export function installDragDropListeners(handlers: DragDropHandlers): () => void
   const onDrop = (ev: Event): void => {
     const dt = (ev as DragEvent).dataTransfer;
     if (!dt) return;
-    const mention = handlers.mentionOf(dt);
-    if (mention === undefined) return;
-    const card = handlers.composerCard(ev.target);
-    if (!card) return;
-    ev.preventDefault();
+    // Only our own drags need attention; everything else is untouched.
+    if (handlers.mentionOf(dt) === undefined) return;
+    // Allow the host editor's native drop insertion (do NOT preventDefault);
+    // clear the hover highlight either way.
     clearHint();
-    handlers.onDropMention(mention, card, ev as DragEvent);
   };
 
   const onDragLeave = (ev: Event): void => {
