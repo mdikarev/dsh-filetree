@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Image preview in the file dock: raster (png/jpeg/gif/webp/avif) and svg
-  files open fitted with zoom controls (buttons, Ctrl+wheel, double-click),
+  files open fitted with zoom controls (toolbar buttons, double-click),
   dimensions in the toolbar and "open original in a new tab"; SVG responses
   are served with a sandbox CSP
 - Workspace-local relative images now render inside the Markdown preview;

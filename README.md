@@ -13,7 +13,7 @@ A toggle handle at the sidebar edge opens a 300 px panel showing the directory t
 - **Live refresh**: the tree updates automatically via a fetch-based SSE stream with a polling fallback. A server heartbeat + client watchdog detect a stalled connection and degrade to polling with a status banner instead of freezing silently.
 - **Performance**: the workspace git-status snapshot is cached server-side (TTL + event invalidation), so refresh bursts share a single `git status` run.
 - **Preview dock**: draggable by its header, resizable, position/size remembered per workspace; text files up to 5 MB (truncation notice); Markdown renders with a Source/Preview toggle — workspace-local relative images render inline, external images stay blocked; syntax highlighting for common languages.
-- **Image preview**: raster (png/jpeg/gif/webp/avif) and svg files open fitted to the panel with zoom controls (buttons, Ctrl+wheel, double-click) and image dimensions in the toolbar; "open original" opens the raw file in a new tab; SVG responses are served with a sandbox CSP.
+- **Image preview**: raster (png/jpeg/gif/webp/avif) and svg files open fitted to the panel with zoom controls (toolbar buttons, double-click) and image dimensions in the toolbar; "open original" opens the raw file in a new tab; SVG responses are served with a sandbox CSP.
 - **JSON view**: Raw/Formatted toggle — Formatted is the default for valid JSON under 1 MB; invalid or oversized files fall back to raw with a note.
 - **Composer integration**: drag files/folders from the tree into the composer to insert @-mention references.
 - **Truncated names**: hovering a row whose name is clipped shows a themed tooltip with the full name (only when truncated).

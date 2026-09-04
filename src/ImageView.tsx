@@ -31,11 +31,9 @@ export function ImageView({ src, onRetry }: ImageViewProps) {
     setFailed(false);
   }, []);
 
-  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-    setZoom((current) => (event.deltaY < 0 ? zoomIn(current) : zoomOut(current)));
-  }, []);
+  // Zoom is controlled by the toolbar buttons and double-click only.
+  // The wheel is deliberately NOT hijacked (no wheel zoom): plain wheel keeps
+  // its native behavior (stage/page scroll, browser Ctrl+wheel zoom).
 
   const imgStyle: React.CSSProperties =
     zoom.mode === "custom"
@@ -70,7 +68,7 @@ export function ImageView({ src, onRetry }: ImageViewProps) {
           <span className="fm-image-dims">{dims.width} × {dims.height}</span>
         )}
       </div>
-      <div className="fm-image-stage" onWheel={handleWheel} onDoubleClick={() => setZoom(toggleZoom)}>
+      <div className="fm-image-stage" onDoubleClick={() => setZoom(toggleZoom)}>
         {failed ? (
           <div className="fm-image-error" role="alert">
             <span>{t("imageLoadFailed")}</span>
