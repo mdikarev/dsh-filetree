@@ -5,8 +5,9 @@ import python from "highlight.js/lib/languages/python";
 import go from "highlight.js/lib/languages/go";
 import csharp from "highlight.js/lib/languages/csharp";
 import rust from "highlight.js/lib/languages/rust";
+import json from "highlight.js/lib/languages/json";
 
-export type SupportedLanguage = "typescript" | "javascript" | "python" | "go" | "csharp" | "rust";
+export type SupportedLanguage = "typescript" | "javascript" | "python" | "go" | "csharp" | "rust" | "json";
 
 const MAX_HIGHLIGHT_CHARS = 5 * 1024 * 1024;
 
@@ -27,9 +28,10 @@ const LANGUAGE_ALIASES: Record<string, SupportedLanguage> = {
   csharp: "csharp",
   rs: "rust",
   rust: "rust",
+  json: "json",
 };
 
-for (const [language, definition] of Object.entries({ typescript, javascript, python, go, csharp, rust })) {
+for (const [language, definition] of Object.entries({ typescript, javascript, python, go, csharp, rust, json })) {
   hljs.registerLanguage(language, definition);
 }
 

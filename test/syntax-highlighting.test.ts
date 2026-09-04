@@ -37,3 +37,12 @@ test("defines colors for the token classes emitted by highlight.js", () => {
     assert.match(CSS_STRING, new RegExp(`\\.hljs-${token}`));
   }
 });
+
+test("detects json and highlights it", () => {
+  assert.equal(detectLanguage("config.json", "{}"), "json");
+  const source = JSON.stringify({ a: [1, true], b: "x" }, null, 2);
+  const { highlighted, html } = highlightSource("config.json", source);
+  assert.equal(highlighted, true);
+  assert.ok(html && html.includes("hljs"));
+  assert.ok(html && html.includes("1"));
+});
