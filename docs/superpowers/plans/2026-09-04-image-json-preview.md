@@ -435,8 +435,10 @@ function request(
       fetch("http://127.0.0.1:" + addr.port + path, { headers })
         .then(async (res) => {
           const body = Buffer.from(await res.arrayBuffer());
+          // WHATWG Headers has no bracket access; convert for header asserts.
+          const headers = Object.fromEntries(res.headers.entries());
           server.close();
-          resolve({ status: res.status, headers: res.headers, body });
+          resolve({ status: res.status, headers, body });
         })
         .catch((err) => { server.close(); reject(err); });
     });
@@ -603,7 +605,9 @@ async function serveRawImage(
     const header = Buffer.alloc(headerSize);
     if (headerSize > 0) await fh.read(header, 0, headerSize, 0);
     detected = detectImageType(header);
-    if (!detected && st.size <= MAX_SVG_BYTES) {
+    // Probe text for SVG up to the RASTER cap so an over-limit SVG is still
+    // recognized and answered 413 (image too large), not 415.
+    if (!detected && st.size <= MAX_IMAGE_BYTES) {
       const sampleSize = Math.min(st.size, 4096);
       const sample = Buffer.alloc(sampleSize);
       if (sampleSize > 0) await fh.read(sample, 0, sampleSize, 0);
