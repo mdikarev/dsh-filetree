@@ -1,7 +1,10 @@
 import { readdir, stat, realpath, lstat, open } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { resolve, sep, basename, join } from "node:path";
 import { createEventsHandler } from "./fs-events.js";
 import { createGitStatusCache, type SnapshotCache } from "./git-status-cache.js";
+import { createCapabilityIssuer, type CapabilityIssuer } from "./capabilities.js";
+import { detectImageType, looksLikeSvg, MAX_IMAGE_BYTES, MAX_SVG_BYTES } from "./image-types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 
@@ -17,6 +20,8 @@ export type GitStatusCache = SnapshotCache<GitEntry>;
 export interface CreateHandlerOptions {
   /** Override the per-handler git-status cache (tests inject spies). */
   gitStatusCache?: GitStatusCache;
+  /** Override the capability issuer (tests inject expiry/rotation). */
+  capabilities?: CapabilityIssuer;
 }
 
 const HIDDEN_SYSTEM = new Set([".git"]);
@@ -277,17 +282,85 @@ function getEntryStatuses(
   };
 }
 
+async function serveRawImage(
+  res: ServerResponse,
+  root: string,
+  hint: string,
+  capabilities: CapabilityIssuer,
+  params: { path: string | null; cap: string | null },
+): Promise<void> {
+  const cap = params.cap;
+  if (!cap || !capabilities.isValid(hint, cap)) {
+    return send(res, 403, { error: "invalid or expired capability" });
+  }
+  const relPath = params.path ?? "";
+  const target = resolve(root, relPath);
+  if (!isInside(root, target)) {
+    return send(res, 403, { error: "path escapes workspace" });
+  }
+  const realTarget = await realpath(target).catch(() => null);
+  if (!realTarget) {
+    return send(res, 404, { error: "not found" });
+  }
+  if (!isInside(root, realTarget)) {
+    return send(res, 403, { error: "path escapes workspace" });
+  }
+  const st = await stat(realTarget);
+  if (!st.isFile()) {
+    return send(res, 400, { error: "not a file" });
+  }
+
+  const fh = await open(realTarget, "r");
+  let detected: ReturnType<typeof detectImageType> = null;
+  try {
+    const headerSize = Math.min(st.size, 32);
+    const header = Buffer.alloc(headerSize);
+    if (headerSize > 0) await fh.read(header, 0, headerSize, 0);
+    detected = detectImageType(header);
+    // Probe text for SVG up to the RASTER cap so an over-limit SVG is still
+    // recognized and answered 413 (image too large), not 415.
+    if (!detected && st.size <= MAX_IMAGE_BYTES) {
+      const sampleSize = Math.min(st.size, 4096);
+      const sample = Buffer.alloc(sampleSize);
+      if (sampleSize > 0) await fh.read(sample, 0, sampleSize, 0);
+      if (looksLikeSvg(sample.toString("latin1"))) {
+        detected = { kind: "svg", mime: "image/svg+xml" };
+      }
+    }
+  } finally {
+    await fh.close();
+  }
+
+  if (!detected) {
+    return send(res, 415, { error: "unsupported content type" });
+  }
+  if (detected.kind === "svg" && st.size > MAX_SVG_BYTES) {
+    return send(res, 413, { error: "image too large" });
+  }
+  if (detected.kind === "raster" && st.size > MAX_IMAGE_BYTES) {
+    return send(res, 413, { error: "image too large" });
+  }
+
+  res.writeHead(200, {
+    "content-type": detected.mime,
+    "content-length": String(st.size),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    ...(detected.kind === "svg" ? { "content-security-policy": "sandbox" } : {}),
+  });
+  const stream = createReadStream(realTarget);
+  stream.on("error", () => res.destroy());
+  stream.pipe(res);
+}
+
 export function createHandler(defaultRoot: string, options: CreateHandlerOptions = {}) {
   const gitCache =
     options.gitStatusCache ??
     createGitStatusCache<GitEntry>({ collect: runGitStatus });
   const eventsHandler = createEventsHandler(defaultRoot, gitCache);
+  const capabilities = options.capabilities ?? createCapabilityIssuer();
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
-      if (req.headers["x-dsh-filemanager"] !== "1") {
-        return send(res, 403, { error: "missing x-dsh-filemanager header" });
-      }
-
       const url = new URL(req.url ?? "/", "http://localhost");
       const parts = url.pathname.split("/").filter(Boolean);
 
@@ -296,12 +369,29 @@ export function createHandler(defaultRoot: string, options: CreateHandlerOptions
       }
 
       const action = parts[1];
+      // /raw is the only action reachable without the header: plain <img>
+      // tags cannot send headers, so /raw authenticates with a capability
+      // token instead. Every other action keeps the header gate.
+      if (action !== "raw" && req.headers["x-dsh-filemanager"] !== "1") {
+        return send(res, 403, { error: "missing x-dsh-filemanager header" });
+      }
+
       const hint = url.searchParams.get("hint");
+      const effectiveHint = hint && hint.length > 0 ? hint : defaultRoot;
       const root = await resolveRoot(hint, defaultRoot);
 
       switch (action) {
         case "root":
           return send(res, 200, { root, name: basename(root) });
+
+        case "cap":
+          return send(res, 200, { cap: capabilities.issueFor(effectiveHint) });
+
+        case "raw":
+          return serveRawImage(res, root, effectiveHint, capabilities, {
+            path: url.searchParams.get("path"),
+            cap: url.searchParams.get("cap"),
+          });
 
         case "list": {
           const relPath = url.searchParams.get("path") ?? "";
