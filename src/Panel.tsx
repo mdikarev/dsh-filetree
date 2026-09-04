@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { fetchRoot, fetchList, sortEntries, type Entry, type ListResponse } from "./api.js";
 import { fetchFile } from "./preview-api.js";
-import { isMarkdownFile, renderMarkdown } from "./markdown-preview.js";
+import { isMarkdownFile, rawMarkdownImageUrl, renderMarkdown } from "./markdown-preview.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
@@ -27,7 +27,7 @@ interface PanelProps {
 type Status = "loading" | "ready" | "error" | "no-workspace";
 
 export type PreviewPresentation =
-  | { kind: "rendered"; html: string; blockedExternalImages: number; unavailableLocalImages: number }
+  | { kind: "rendered"; html: string; blockedExternalImages: number }
   | { kind: "source" | "highlighted-source"; content: string; html?: string | null; error?: string };
 
 export function getPreviewPresentation(
@@ -36,6 +36,7 @@ export function getPreviewPresentation(
   truncated: boolean,
   mode: "source" | "rendered",
   workspaceHint: string,
+  imageCapForMarkdown?: string | null,
 ): PreviewPresentation {
   const highlighted = highlightSource(fileName, content, truncated);
   if (!isMarkdownFile(fileName) || mode === "source") {
@@ -44,7 +45,10 @@ export function getPreviewPresentation(
       : { kind: "source", content };
   }
   try {
-    return { kind: "rendered", ...renderMarkdown(content, { filePath: fileName, workspaceHint }) };
+    const resourceUrl = imageCapForMarkdown
+      ? (resource: string) => rawMarkdownImageUrl(workspaceHint, fileName, resource, imageCapForMarkdown)
+      : undefined;
+    return { kind: "rendered", ...renderMarkdown(content, { filePath: fileName, workspaceHint, resourceUrl }) };
   } catch (error) {
     return { kind: "source", content, error: error instanceof Error ? error.message : String(error) };
   }
@@ -501,7 +505,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const displayContent = isJson && jsonDisplay ? jsonDisplay.text : previewContent;
   const previewPresentation = isImage
     ? null
-    : getPreviewPresentation(previewPath || previewTitle, displayContent, previewTruncated, previewMode, hint);
+    : getPreviewPresentation(previewPath || previewTitle, displayContent, previewTruncated, previewMode, hint, imageCap);
   const markdownFile = isMarkdownFile(previewTitle);
 
   return (
@@ -595,6 +599,12 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
                 <button type="button" className={previewMode === "rendered" ? "is-active" : ""} aria-pressed={previewMode === "rendered"} onClick={() => store.setPreviewMode("rendered")}>{t("renderedMode")}</button>
               </div>
             )}
+            {isJson && (
+              <div className="fm-preview-toggle" role="group" aria-label={t("jsonMode")}>
+                <button type="button" className={jsonMode === "raw" ? "is-active" : ""} aria-pressed={jsonMode === "raw"} onClick={() => store.setJsonMode("raw")}>{t("rawMode")}</button>
+                <button type="button" className={jsonMode === "pretty" ? "is-active" : ""} aria-pressed={jsonMode === "pretty"} onClick={() => store.setJsonMode("pretty")}>{t("prettyMode")}</button>
+              </div>
+            )}
             <button
               className="fm-preview-close"
               onClick={handleClosePreview}
@@ -646,7 +656,16 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               <div className="fm-preview-warning" role="status">{t("jsonTooLargeNote")}</div>
             )}
             {!previewLoading && !previewError && !isImage && previewPresentation !== null && previewPresentation.kind === "rendered" && (
-              <div className="fm-markdown-content" dangerouslySetInnerHTML={{ __html: previewPresentation.html }} />
+              <div
+                className="fm-markdown-content"
+                dangerouslySetInnerHTML={{ __html: previewPresentation.html }}
+                onErrorCapture={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (target instanceof HTMLImageElement && target.closest(".fm-markdown-content")) {
+                    target.style.display = "none";
+                  }
+                }}
+              />
             )}
             {!previewLoading && !previewError && !isImage && previewPresentation !== null && previewPresentation.kind !== "rendered" && (
               <pre className={previewPresentation.kind === "highlighted-source" ? "fm-modal-pre fm-modal-pre--highlighted" : "fm-modal-pre"} dangerouslySetInnerHTML={previewPresentation.html ? { __html: previewPresentation.html } : undefined}>{previewPresentation.html ? undefined : previewPresentation.content}</pre>

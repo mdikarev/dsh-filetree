@@ -12,11 +12,6 @@ export interface MarkdownRenderOptions {
 export interface MarkdownRenderResult {
   html: string;
   blockedExternalImages: number;
-  // TRANSITIONAL (controller ruling R-01): kept as a zeroed field until
-  // Task 11 removes it from Panel.tsx types together with the dead warning UI.
-  // Removing it at Task 7 would break Panel typecheck (it spreads
-  // renderMarkdown into PreviewPresentation, which still declares the field).
-  unavailableLocalImages: number;
 }
 const READ_PATH = "/filemanager-fs/read";
 
@@ -120,5 +115,5 @@ export function renderMarkdown(source: string, options: MarkdownRenderOptions): 
     return "<a" + before + "href=\"#\"" + after + ">";
   });
   html = sanitize(html);
-  return { html, blockedExternalImages, unavailableLocalImages: 0 };
+  return { html, blockedExternalImages };
 }
