@@ -14,13 +14,14 @@ const execFileAsync = promisify(execFile);
 function request(
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,
   path: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  method = "GET"
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const server = createServer(async (req, res) => { await handler(req, res); });
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address() as { port: number };
-      fetch("http://127.0.0.1:" + addr.port + path, { headers })
+      fetch("http://127.0.0.1:" + addr.port + path, { method, headers })
         .then(async (res) => { const body = await res.json(); server.close(); resolve({ status: res.status, body }); })
         .catch((err) => { server.close(); reject(err); });
     });
@@ -98,5 +99,79 @@ describe("GET /filemanager-fs/delete-info", () => {
     const res = await request(handler, "/filemanager-fs/delete-info?hint=" + encodeURIComponent(dir) + "&path=dangling-link", hdr);
     assert.equal(res.status, 200);
     assert.equal(res.body.kind, "symlink-file");
+  });
+});
+
+describe("POST /filemanager-fs/delete", () => {
+  let dir: string;
+  let handler: ReturnType<typeof createHandler>;
+  const hdr = { "x-dsh-filemanager": "1" };
+  const q = (p: string) => "/filemanager-fs/delete?hint=" + encodeURIComponent(dir) + "&path=" + encodeURIComponent(p);
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), "delete-api-test-"));
+    handler = createHandler(dir, { gitStatusCache: createGitStatusCache({ ttlMs: 0, collect: (root) => debugCollectStatuses(root) }) });
+    await mkdir(join(dir, "sub", "deep"), { recursive: true });
+    await writeFile(join(dir, "a.txt"), "a");
+    await writeFile(join(dir, "sub", "b.js"), "b");
+    await writeFile(join(dir, "sub", "deep", "c.txt"), "c");
+    await symlink(join(dir, "a.txt"), join(dir, "link-file"));
+    await symlink(join(dir, "sub"), join(dir, "link-dir"));
+    await writeFile(join(dir, "outside.txt"), "keep me"); // created before the outside symlink target
+  });
+  after(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it("requires the header and rejects non-POST-less semantics via 403 for GET", async () => {
+    // The header gate runs before dispatch, so a headerless request is 403
+    // regardless of method; the POST-only check lives inside the case.
+    const noHeader = await request(handler, q("a.txt"));
+    assert.equal(noHeader.status, 403);
+  });
+
+  it("enforces POST: GET with the header returns 405", async () => {
+    const res = await request(handler, q("a.txt"), hdr);
+    assert.equal(res.status, 405);
+  });
+
+  it("deletes a single file", async () => {
+    const res = await request(handler, q("a.txt"), hdr, "POST");
+    assert.equal(res.status, 200);
+    assert.equal(res.body.deleted, true);
+    await assert.rejects(import("node:fs/promises").then((fs) => fs.stat(join(dir, "a.txt"))));
+  });
+
+  it("deletes a folder recursively", async () => {
+    const res = await request(handler, q("sub"), hdr, "POST");
+    assert.equal(res.status, 200);
+    await assert.rejects(import("node:fs/promises").then((fs) => fs.stat(join(dir, "sub"))));
+  });
+
+  it("deletes a symlink but not its target (inside or outside)", async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), "delete-link-target-"));
+    await writeFile(join(outsideDir, "target.txt"), "keep");
+    const linkOutside = join(dir, "link-outside");
+    await symlink(join(outsideDir, "target.txt"), linkOutside);
+    const okLink = await request(handler, q("link-file"), hdr, "POST");
+    assert.equal(okLink.status, 200);
+    const okOut = await request(handler, q("link-outside"), hdr, "POST");
+    assert.equal(okOut.status, 200);
+    // sanity: outside target still exists (only the link was removed)
+    const st = await import("node:fs/promises").then((fs) => fs.stat(join(outsideDir, "target.txt")));
+    assert.ok(st.isFile());
+    await rm(outsideDir, { recursive: true, force: true });
+  });
+
+  it("refuses workspace root, .git and escapes", async () => {
+    const rootRes = await request(handler, q(""), hdr, "POST");
+    assert.equal(rootRes.status, 403);
+    const gitRes = await request(handler, q(".git"), hdr, "POST");
+    assert.equal(gitRes.status, 403);
+    const esc = await request(handler, q("../outside.txt"), hdr, "POST");
+    assert.equal(esc.status, 403);
+  });
+
+  it("returns 404 for missing paths", async () => {
+    const res = await request(handler, q("nope.txt"), hdr, "POST");
+    assert.equal(res.status, 404);
   });
 });

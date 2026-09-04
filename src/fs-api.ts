@@ -1,4 +1,4 @@
-import { readdir, stat, realpath, lstat, open } from "node:fs/promises";
+import { readdir, stat, realpath, lstat, open, rmdir, unlink } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { resolve, sep, basename, join } from "node:path";
 import { createEventsHandler } from "./fs-events.js";
@@ -400,6 +400,47 @@ async function serveRawImage(
   stream.pipe(res);
 }
 
+// --- delete action helpers (POST /filemanager-fs/delete) ---
+
+async function deleteRecursive(absDir: string): Promise<void> {
+  const entries = await readdir(absDir);
+  for (const entry of entries) {
+    const abs = join(absDir, entry);
+    const st = await lstat(abs);
+    if (st.isSymbolicLink()) await unlink(abs);
+    else if (st.isDirectory()) await deleteRecursive(abs);
+    else await unlink(abs);
+  }
+  await rmdir(absDir);
+}
+
+async function deletePathEntry(root: string, relPath: string): Promise<boolean> {
+  const segments = relPath.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    throw Object.assign(new Error("cannot delete workspace root"), { expose: "cannot delete workspace root" });
+  }
+  // Never delete *through* an intermediate symlink.
+  let current = root;
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const next = join(current, segments[i]);
+    const st = await lstat(next).catch(() => null);
+    if (!st) return false;
+    if (st.isSymbolicLink()) throw Object.assign(new Error("path resolves through a symlink"), { expose: "path resolves through a symlink" });
+    current = next;
+  }
+  const target = join(current, segments[segments.length - 1]!);
+  const st = await lstat(target).catch(() => null);
+  if (!st) return false;
+  if (st.isSymbolicLink()) await unlink(target);
+  else if (st.isDirectory()) await deleteRecursive(target);
+  else await unlink(target);
+  return true;
+}
+
+function hasGitSegment(relPath: string): boolean {
+  return relPath.split("/").filter(Boolean).some((segment) => segment === ".git");
+}
+
 export function createHandler(defaultRoot: string, options: CreateHandlerOptions = {}) {
   const gitCache =
     options.gitStatusCache ??
@@ -570,6 +611,36 @@ export function createHandler(defaultRoot: string, options: CreateHandlerOptions
             uncommitted: entryUncommitted(gitMap, relPath, isDir),
             ...(gitStatus !== undefined && gitStatus !== null ? { gitStatus } : {}),
           });
+        }
+
+        case "delete": {
+          if (req.method !== "POST") {
+            return send(res, 405, { error: "method not allowed" });
+          }
+          const relPath = url.searchParams.get("path") ?? "";
+          const target = resolve(root, relPath);
+          if (!isInside(root, target)) {
+            return send(res, 403, { error: "path escapes workspace" });
+          }
+          if (hasGitSegment(relPath)) {
+            return send(res, 403, { error: "cannot delete .git" });
+          }
+          let deleted: boolean;
+          try {
+            deleted = await deletePathEntry(root, relPath);
+          } catch (err: any) {
+            const expose = err?.expose ?? err?.message ?? String(err);
+            const code = err?.code;
+            if (code === "EACCES" || code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY" || code === "ELOOP") {
+              return send(res, 409, { error: "delete failed: " + expose });
+            }
+            return send(res, 403, { error: expose });
+          }
+          if (!deleted) {
+            return send(res, 404, { error: "not found" });
+          }
+          gitCache.invalidate(root);
+          return send(res, 200, { deleted: true, path: relPath });
         }
 
         default:
