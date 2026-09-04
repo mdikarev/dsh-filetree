@@ -10,6 +10,11 @@ import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange 
 import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
 import { useL10n } from "./use-l10n.js";
+import { classifyPreviewKind } from "./preview-kind.js";
+import { buildRawFileUrl } from "./raw-url.js";
+import { capCache } from "./caps.js";
+import { ImageView } from "./ImageView.js";
+import { formatJson, type JsonDisplay } from "./json-view.js";
 
 interface PanelProps {
   open: boolean;
@@ -106,6 +111,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewPath, setPreviewPath] = useState("");
   const previewMode = useSyncExternalStore(store.subscribe, () => store.getState().previewMode);
+  const jsonMode = useSyncExternalStore(store.subscribe, () => store.getState().jsonMode);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [previewContent, setPreviewContent] = useState("");
@@ -114,6 +120,8 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
   // Changed-preview confirmation banner state (idle | changed | dismissed).
   const [changedPreview, setChangedPreview] = useState<ChangedPreviewState>({ kind: "idle" });
+  const [imageCap, setImageCap] = useState<string | null>(null);
+  const [imageVersion, setImageVersion] = useState(0);
 
   const previewWindowRef = useRef<HTMLDivElement | null>(null);
   const previewPosRef = useRef<Point | null>(null);
@@ -247,6 +255,11 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // the read error and the banner stays for another attempt or dismiss.
   const handleRefreshChangedPreview = useCallback(async () => {
     if (!hint || !previewPath) return;
+    if (classifyPreviewKind(previewTitle) === "image") {
+      setImageVersion((v) => v + 1);
+      setChangedPreview({ kind: "idle" });
+      return;
+    }
     setPreviewLoading(true);
     try {
       const res = await fetchFile(hint, previewPath);
@@ -259,7 +272,7 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     } finally {
       setPreviewLoading(false);
     }
-  }, [hint, previewPath]);
+  }, [hint, previewPath, previewTitle]);
 
   // «Оставить текущую версию»: hide the banner until the file's next event.
   const handleDismissChangedPreview = useCallback(() => {
@@ -280,7 +293,6 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
 
   const handleOpenFile = useCallback(async (fullPath: string, entry: Entry) => {
     if (!hint) return;
-    // Восстанавливаем сохранённое расположение панели для этого воркспейса
     const layout = store.getState().previewLayout;
     setPreviewPos(layout ? { x: layout.x, y: layout.y } : null);
     setPreviewSize(layout ? { width: layout.width, height: layout.height } : null);
@@ -292,16 +304,37 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setPreviewContent("");
     setPreviewTruncated(false);
     setChangedPreview({ kind: "idle" });
+    setImageVersion(0);
+
+    const kind = classifyPreviewKind(entry.name);
     try {
+      if (kind === "image") {
+        const cap = await capCache.getCap(hint);
+        setImageCap(cap);
+        return;
+      }
       const res = await fetchFile(hint, fullPath);
       setPreviewContent(res.content);
       setPreviewTruncated(Boolean(res.truncated));
+      if (kind === "markdown") {
+        capCache.getCap(hint).then(setImageCap).catch(() => {});
+      }
     } catch (err: any) {
       setPreviewError(err?.message ?? String(err));
     } finally {
       setPreviewLoading(false);
     }
   }, [hint, store]);
+
+  // When the hint changes with an image open, invalidate + refetch the cap
+  // and bump the version so the raw URL points at the new workspace.
+  useEffect(() => {
+    if (!hint || !previewOpen || classifyPreviewKind(previewTitle) !== "image") return;
+    setImageCap(null);
+    setImageVersion((v) => v + 1);
+    capCache.invalidate(hint);
+    capCache.getCap(hint).then(setImageCap).catch((err: any) => setPreviewError(err?.message ?? String(err)));
+  }, [hint, previewOpen, previewTitle]);
 
   const handleClosePreview = useCallback(() => {
     setPreviewOpen(false);
@@ -452,9 +485,14 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     ...(previewPos ? { left: previewPos.x, top: previewPos.y, right: "auto" } : {}),
     ...(previewSize ? { width: previewSize.width, height: previewSize.height } : {}),
   };
-  const previewPresentation = getPreviewPresentation(
-    previewPath || previewTitle, previewContent, previewTruncated, previewMode, hint,
-  );
+  const previewKind = classifyPreviewKind(previewTitle);
+  const isImage = previewKind === "image";
+  const isJson = previewKind === "json";
+  const jsonDisplay: JsonDisplay | null = isJson ? formatJson(previewContent, jsonMode, previewTruncated) : null;
+  const displayContent = isJson && jsonDisplay ? jsonDisplay.text : previewContent;
+  const previewPresentation = isImage
+    ? null
+    : getPreviewPresentation(previewPath || previewTitle, displayContent, previewTruncated, previewMode, hint);
   const markdownFile = isMarkdownFile(previewTitle);
 
   return (
@@ -586,17 +624,26 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             {!previewLoading && previewError && (
               <div className="fm-error">{t("errorPrefix")}{previewError}</div>
             )}
-            {!previewLoading && !previewError && previewPresentation.kind === "rendered" && (
+            {!previewLoading && !previewError && isImage && imageCap && (
+              <ImageView
+                src={buildRawFileUrl(hint, previewPath, imageCap, imageVersion)}
+                onRetry={() => setImageVersion((v) => v + 1)}
+              />
+            )}
+            {!previewLoading && !previewError && isJson && jsonDisplay?.note === "parse" && (
+              <div className="fm-preview-warning" role="status">{t("jsonParseNote")}</div>
+            )}
+            {!previewLoading && !previewError && isJson && jsonDisplay?.note === "too-large" && (
+              <div className="fm-preview-warning" role="status">{t("jsonTooLargeNote")}</div>
+            )}
+            {!previewLoading && !previewError && !isImage && previewPresentation !== null && previewPresentation.kind === "rendered" && (
               <div className="fm-markdown-content" dangerouslySetInnerHTML={{ __html: previewPresentation.html }} />
             )}
-            {!previewLoading && !previewError && previewPresentation.kind !== "rendered" && (
+            {!previewLoading && !previewError && !isImage && previewPresentation !== null && previewPresentation.kind !== "rendered" && (
               <pre className={previewPresentation.kind === "highlighted-source" ? "fm-modal-pre fm-modal-pre--highlighted" : "fm-modal-pre"} dangerouslySetInnerHTML={previewPresentation.html ? { __html: previewPresentation.html } : undefined}>{previewPresentation.html ? undefined : previewPresentation.content}</pre>
             )}
-            {!previewLoading && !previewError && previewPresentation.kind !== "rendered" && previewPresentation.error && (
+            {!previewLoading && !previewError && !isImage && previewPresentation !== null && previewPresentation.kind !== "rendered" && previewPresentation.error && (
               <div className="fm-preview-render-error">{t("previewUnavailablePrefix")}{previewPresentation.error}</div>
-            )}
-            {!previewLoading && !previewError && previewPresentation.kind === "rendered" && previewPresentation.unavailableLocalImages > 0 && (
-              <div className="fm-preview-warning" role="status">{t("localImagesUnavailable")}</div>
             )}
             {!previewLoading && previewTruncated && (
               <div className="fm-preview-warning" role="status">{t("fileTruncated")}</div>
