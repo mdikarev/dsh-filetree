@@ -80,4 +80,23 @@ describe("GET /filemanager-fs/delete-info", () => {
     const res = await request(handler, "/filemanager-fs/delete-info?hint=" + encodeURIComponent(dir) + "&path=tracked.txt");
     assert.equal(res.status, 403);
   });
+
+  it("reports uncommitted=true for a wholly-untracked dir via its collapsed row", async () => {
+    await mkdir(join(dir, "newdir"));
+    await writeFile(join(dir, "newdir", "fresh.txt"), "f"); // never git-added
+    const res = await request(handler, "/filemanager-fs/delete-info?hint=" + encodeURIComponent(dir) + "&path=newdir", hdr);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.kind, "dir");
+    assert.equal(res.body.uncommitted, true);
+    // a clean tracked dir stays uncommitted false
+    const clean = await request(handler, "/filemanager-fs/delete-info?hint=" + encodeURIComponent(dir) + "&path=sub", hdr);
+    assert.equal(clean.body.uncommitted, false);
+  });
+
+  it("preflights a dangling symlink as symlink-file", async () => {
+    await symlink(join(dir, "does-not-exist"), join(dir, "dangling-link"));
+    const res = await request(handler, "/filemanager-fs/delete-info?hint=" + encodeURIComponent(dir) + "&path=dangling-link", hdr);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.kind, "symlink-file");
+  });
 });

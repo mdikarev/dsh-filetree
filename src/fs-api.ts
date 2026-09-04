@@ -295,7 +295,7 @@ async function resolveEntryKind(root: string, relPath: string): Promise<Resolved
   if (!st) return null;
   if (st.isSymbolicLink()) {
     const linkStat = await stat(target).catch(() => null);
-    if (!linkStat) return null;
+    if (!linkStat) return "symlink-file"; // dangling link — still deletable as a link
     return linkStat.isDirectory() ? "symlink-dir" : "symlink-file";
   }
   if (st.isDirectory()) return "dir";
@@ -308,7 +308,8 @@ function isUncommittedStatus(status: GitStatus | undefined): boolean {
 }
 
 /** True when the entry itself (file) or any existing descendant (dir) carries
- *  an uncommitted git status; ignored rows never count. */
+ *  an uncommitted git status; a dir's own collapsed `?? dir/` row (wholly
+ *  untracked directory) counts as well. Ignored rows never count. */
 function entryUncommitted(gitMap: Map<string, GitEntry>, relPath: string, isDir: boolean): boolean {
   const normalized = normalizeGitPath(relPath).replace(/\/+$/, "");
   const self = gitMap.get(normalized) ?? gitMap.get(normalized + "/");
@@ -318,7 +319,12 @@ function entryUncommitted(gitMap: Map<string, GitEntry>, relPath: string, isDir:
       if (path === normalized || path === normalized + "/") continue;
       if ((!prefix || path.startsWith(prefix)) && entry.status !== "ignored" && isUncommittedStatus(entry.status)) return true;
     }
-    return false;
+    // `git status --porcelain` collapses a brand-new directory to one `?? dir/`
+    // row that the descendant scan above skips, so a wholly-untracked dir
+    // would otherwise report uncommitted=false and lose its delete warning.
+    // Count an uncommitted self row (collapsed dir row first).
+    const selfDir = gitMap.get(normalized + "/") ?? gitMap.get(normalized);
+    return isUncommittedStatus(selfDir?.status);
   }
   return isUncommittedStatus(self?.status);
 }
