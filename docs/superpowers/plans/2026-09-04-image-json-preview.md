@@ -1075,7 +1075,9 @@ function resolveWorkspaceResource(markdownPath: string, resource: string): strin
   const directory = decodedMarkdown.includes("/") ? decodedMarkdown.slice(0, decodedMarkdown.lastIndexOf("/")) : "";
   const combined = [directory, decoded].filter(Boolean).join("/");
   if (combined === ".." || combined.startsWith("../") || combined.includes("/../")) return null;
-  return combined;
+  // Normalize "." path segments ("./x", "a/./b"): the server resolves them
+  // identically, but generated URLs stay clean ("./img" -> "img").
+  return combined.split("/").filter((segment) => segment !== ".").join("/");
 }
 
 export function workspaceResourceUrl(hint: string, markdownPath: string, resource: string): string | null {
