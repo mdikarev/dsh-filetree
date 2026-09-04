@@ -1796,7 +1796,15 @@ const handleRefreshChangedPreview = useCallback(async () => {
 7. When the hint changes with an image open, invalidate + refetch the cap and bump the version:
 
 ```ts
+// Fire ONLY on a genuine hint change (review finding T10-1): keep previewOpen /
+// previewTitle in the deps so the guard reads fresh state, but early-return
+// unless the hint actually changed — otherwise every image open would re-issue
+// a cap request, invalidate the cache, unmount/remount the viewer and risk an
+// error panel over a successfully opened image.
+const prevHintRef = useRef(hint);
 useEffect(() => {
+  if (prevHintRef.current === hint) return;
+  prevHintRef.current = hint;
   if (!hint || !previewOpen || classifyPreviewKind(previewTitle) !== "image") return;
   setImageCap(null);
   setImageVersion((v) => v + 1);
