@@ -4,8 +4,10 @@ const LS_KEY = "dsh-filemanager-open";
 const LS_EXPANDED_PREFIX = "dsh-filemanager-expanded:";
 const LS_PREVIEW_PREFIX = "dsh-filemanager-preview:";
 const LS_PREVIEW_MODE_PREFIX = "dsh-filemanager-preview-mode:";
+const LS_JSON_MODE_PREFIX = "dsh-filemanager-json-mode:";
 
 export type PreviewMode = "source" | "rendered";
+export type JsonMode = "raw" | "pretty";
 
 export interface PreviewLayout {
   x: number;
@@ -20,6 +22,7 @@ export interface FileManagerState {
   currentWorkspace: string | null;
   previewLayout: PreviewLayout | null;
   previewMode: PreviewMode;
+  jsonMode: JsonMode;
 }
 
 export interface FileManagerStore {
@@ -41,6 +44,7 @@ export interface FileManagerStore {
   setWorkspace(workspaceHint: string): void;
   setPreviewLayout(layout: PreviewLayout | null): void;
   setPreviewMode(mode: PreviewMode): void;
+  setJsonMode(mode: JsonMode): void;
 }
 
 function loadFromStorage(): boolean {
@@ -141,13 +145,30 @@ function savePreviewLayout(workspaceHint: string | null, layout: PreviewLayout |
   } catch {}
 }
 
+function getJsonModeKey(workspaceHint: string): string {
+  return LS_JSON_MODE_PREFIX + encodeURIComponent(workspaceHint);
+}
+function loadJsonMode(workspaceHint: string | null): JsonMode {
+  if (!workspaceHint) return "pretty";
+  try {
+    return localStorage.getItem(getJsonModeKey(workspaceHint)) === "raw" ? "raw" : "pretty";
+  } catch {
+    return "pretty";
+  }
+}
+function saveJsonMode(workspaceHint: string | null, mode: JsonMode): void {
+  if (!workspaceHint) return;
+  try { localStorage.setItem(getJsonModeKey(workspaceHint), mode); } catch {}
+}
+
 export function createStore(): FileManagerStore {
   let state: FileManagerState = { 
     open: loadFromStorage(),
     expandedPaths: new Set(),
     currentWorkspace: null,
     previewLayout: null,
-    previewMode: "source"
+    previewMode: "source",
+    jsonMode: "pretty"
   };
   const listeners = new Set<() => void>();
   const expandedListeners = new Set<() => void>();
@@ -228,12 +249,14 @@ export function createStore(): FileManagerStore {
       const expandedPaths = loadExpandedPaths(workspaceHint);
       const previewLayout = loadPreviewLayout(workspaceHint);
       const previewMode = loadPreviewMode(workspaceHint);
+      const jsonMode = loadJsonMode(workspaceHint);
       state = {
         ...state,
         currentWorkspace: workspaceHint,
         expandedPaths,
         previewLayout,
-        previewMode
+        previewMode,
+        jsonMode
       };
       // The expanded set belongs to the workspace: switching workspaces
       // replaces it, so expanded-path subscribers (the live-refresh
@@ -245,6 +268,11 @@ export function createStore(): FileManagerStore {
     setPreviewMode: (mode: PreviewMode) => {
       state = { ...state, previewMode: mode };
       savePreviewMode(state.currentWorkspace, mode);
+      listeners.forEach((l) => l());
+    },
+    setJsonMode: (mode: JsonMode) => {
+      state = { ...state, jsonMode: mode };
+      saveJsonMode(state.currentWorkspace, mode);
       listeners.forEach((l) => l());
     },
     setPreviewLayout: (layout: PreviewLayout | null) => {
