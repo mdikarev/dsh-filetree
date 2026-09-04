@@ -662,19 +662,6 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
         />
       )}
 
-      {pendingDelete && (deleteInfo || deleteError) && (
-        <ConfirmDeleteDialog
-          name={pendingDelete.name}
-          model={buildDeleteDialogModel(
-            deleteInfo ?? { kind: "missing", name: pendingDelete.name, path: pendingDelete.path, isRoot: false, uncommitted: false }
-          )}
-          busy={deleteBusy}
-          error={deleteError}
-          onCancel={() => { setPendingDelete(null); setDeleteInfo(null); setDeleteError(null); }}
-          onConfirm={handleConfirmDelete}
-        />
-      )}
-
       {previewOpen && (
         <div
           className="fm-preview-window"
@@ -776,6 +763,23 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
             )}
           </div>
         </div>
+      )}
+
+      {/* The confirm dialog must be the LAST overlay in the fragment: its
+          backdrop and the preview dock share z-index 2147483647, so with
+          equal z-index the later DOM sibling paints above — a dialog after
+          the preview (and after the context menu) always covers the dock. */}
+      {pendingDelete && (deleteInfo || deleteError) && (
+        <ConfirmDeleteDialog
+          name={pendingDelete.name}
+          model={buildDeleteDialogModel(
+            deleteInfo ?? { kind: "missing", name: pendingDelete.name, path: pendingDelete.path, isRoot: false, uncommitted: false }
+          )}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => { setPendingDelete(null); setDeleteInfo(null); setDeleteError(null); }}
+          onConfirm={handleConfirmDelete}
+        />
       )}
     </>
   );
