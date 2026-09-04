@@ -49,6 +49,15 @@ URL изображения с query `hint/path/cap`: `/filemanager-fs/raw?hint=<
 ### JSON-режим (jsonMode)
 Режим показа `.json` в доке: `raw` (исходный текст) или `pretty` (форматированный с отступом 2 + подсветка); по умолчанию `pretty`, хранится per-workspace в localStorage (src/store.ts), решения — `formatJson` (src/json-view.ts).
 
+### Контекстное меню строки
+Меню на строке дерева (правый клик или Menu/Shift+F10): `role="menu"`/`menuitem`, пока с одной командой «Удалить…»; каркас переиспользуем для будущих команд (src/ContextMenu.tsx).
+
+### Диалог подтверждения удаления
+Инлайн `alertdialog` с полным путём, предупреждением о незакоммиченных изменениях и кнопками «Отмена»/«Удалить»; фокус по умолчанию на «Отмена», Esc закрывает диалог, а не док предпросмотра (src/ConfirmDeleteDialog.tsx).
+
+### uncommitted-предупреждение
+Флаг `uncommitted` из `GET /filemanager-fs/delete-info`: удаляемый файл (или любой существующий потомок папки) имеет git-статус modified/added/untracked (ignored не считаются) — при удалении эти изменения будут потеряны.
+
 ## Naming conventions
 <!-- Record project-wide naming rules. -->
 

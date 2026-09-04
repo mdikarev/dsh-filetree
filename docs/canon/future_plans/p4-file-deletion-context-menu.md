@@ -29,6 +29,6 @@
 
 ---
 
-Status: draft
+Status: implementing (2026-09-04 — дизайн согласован: spec docs/superpowers/specs/2026-09-04-file-deletion-context-menu-design.md; trash/undo и мультивыбор вынесены из объёма)
 Depends: дерево + контекстные меню отсутствуют (базовый клик/drag уже есть), live refresh и git-бейджи реализованы
 Unblocks: остальные мутации (rename/create/move), git-ориентированные действия (например, discard/restore)

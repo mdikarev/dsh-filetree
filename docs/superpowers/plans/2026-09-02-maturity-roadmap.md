@@ -43,5 +43,5 @@
 
 ## Out of scope (parked)
 
-- File mutations; editor tabs; tree search/filter; "open in OS file manager".
+- File mutations — удаление спроектировано как первый slice (spec+plan 2026-09-04, контекстное меню); остальные мутации (create/rename/move) остаются parked; editor tabs; tree search/filter; "open in OS file manager".
 - Observability/UX error banner (audit item D) — candidate for the phase after this roadmap lands.

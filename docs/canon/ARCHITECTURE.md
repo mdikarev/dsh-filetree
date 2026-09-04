@@ -9,9 +9,10 @@
 ## System context
 - DSH Web shell: предоставляет слоты и контекст воркспейсов/сессий
 - Рабочая директория воркспейса: границы доступа определены хинтом и проверкой "внутри корня"
+- Хинт дерева берётся из воркспейса текущей сессии. Готовность списка: `phase === "ready"` (dsh 0.1.2+); `state: "loading"` при реконнекте follow не сбрасывает хинт. Для старых снимков — legacy-флаг `baselinesReady`. Пока `sessions.phase === "pending"`, хинт не угадывается через `items[0]`.
 
 ## Building blocks
-- FS API (src/fs-api.ts): обработчик HTTP `createHandler(defaultRoot, options?)` с экшенами `root`, `list`, `read`, `events` (SSE), `cap` и `raw`. Опция `gitStatusCache` (тип `GitStatusCache = SnapshotCache<GitEntry>`) позволяет впрыснуть кэш в тестах; по умолчанию создаётся per-handler кэш с коллектором `runGitStatus`. Опция `capabilities` (тип `CapabilityIssuer`) впрыскивает issuer в тестах; по умолчанию per-handler `createCapabilityIssuer()`. В `list` git-карта берётся через `gitCache.get(root)` (см. кэш ниже), `debugCollectStatuses` остаётся без кэша. Header-гейт `x-dsh-filemanager: 1` применяется ко всем экшенам, кроме `raw` (см. Public interfaces).
+- FS API (src/fs-api.ts): обработчик HTTP `createHandler(defaultRoot, options?)` с экшенами `root`, `list`, `read`, `events` (SSE), `cap` и `raw`. Опция `gitStatusCache` (тип `GitStatusCache = SnapshotCache<GitEntry>`) позволяет впрыснуть кэш в тестах; по умолчанию создаётся per-handler кэш с коллектором `runGitStatus`. Опция `capabilities` (тип `CapabilityIssuer`) впрыскивает issuer в тестах; по умолчанию per-handler `createCapabilityIssuer()`. В `list` git-карта берётся через `gitCache.get(root)` (см. кэш ниже), `debugCollectStatuses` остаётся без кэша. Header-гейт `x-dsh-filemanager: 1` применяется ко всем экшенам, кроме `raw` (см. Public interfaces). Экшены `delete-info` (GET, read-only preflight) и `delete` (только POST — единственная write-операция цикла; symlink-safe) описаны в Public interfaces.
 - События файловой системы (src/fs-events.ts): SSE-endpoint `GET /filemanager-fs/events` — парсинг и валидация `paths`, жизненный цикл `fs.watch` (watcher-ы создаются только после валидации всех путей и освобождаются при disconnect/ошибке соединения),
    нормализация событий в `{ type: "changed", path, kind }` с фильтрацией содержимого `.git`; отдельные watcher-ы на git-метаданные (каталог `.git/` и `.git/refs/heads`, если есть)
    эмитят событие `{ type: "git-changed" }` при изменении `index`/`HEAD`/refs. Сигнатура: `createEventsHandler(defaultRoot, gitCache?, opts?: { heartbeatMs? })` — опциональный gitCache
@@ -102,6 +103,13 @@
 
 Ограничение подсветки: highlight.js относит распространённые ключевые слова, включая `if`/`export`/`const`, к общему классу `hljs-keyword`, поэтому они намеренно используют один акцентный цвет; более тонкое семантическое различение категорий ключевых слов не входит в текущую реализацию.
 
+### Удаление файла/папки через контекстное меню
+1. Правый клик на строке дерева (или клавиши Menu/Shift+F10 на сфокусированной строке) открывает контекстное меню (src/ContextMenu.tsx, `role="menu"`); команда одна — «Удалить…» (danger-стиль; каркас меню допускает другие команды).
+2. Выбор «Удалить…» запоминает target (path/name в Panel) и выполняет read-only preflight `GET /filemanager-fs/delete-info`.
+3. По данным preflight открывается инлайн-диалог (src/ConfirmDeleteDialog.tsx, `role="alertdialog"`): полный относительный путь; для папки — «и всё содержимое»; при `uncommitted` — предупреждение о потере незакоммиченных изменений; кнопки «Отмена» (фокус по умолчанию, Esc = отмена) и «Удалить» (danger). Пока диалог открыт, Esc закрывает диалог, а не док предпросмотра. `isRoot`/`missing` блокируют подтверждение.
+4. Подтверждение → `POST /filemanager-fs/delete`. Успех: закрывается preview удалённого файла/файла внутри удалённой папки (isPreviewAffected), раскрытые пути под удалённой папкой prune-ятся (store.pruneExpandedPaths), списки обновляются fs-событием; ошибки показываются локализованно в панели.
+5. Диалог/меню полностью клавиатуродоступны; строки — l10n en/ru.
+
 ### Вставка пути в поле ввода (drag-and-drop)
 1. Пользователь перетаскивает строку дерева (файл или папку) в область поля ввода чата. `dragstart` кладёт в `dataTransfer` кастомный тип `application/x-dsh-filemanager` (JSON `{ path, kind }` — относительный posix-путь и вид) и `text/plain` (текст упоминания) как fallback.
 2. Document-level слушатели (capture) видят `dragover`/`drop`. Они действуют только если `dataTransfer.types` содержит кастомный MIME и цель события находится внутри карточки композера (`closest('[data-composer-card]')`); иначе событие не трогается — дроп OS-файлов остаётся у image drop zone ui-attachment (реагирует только на `Files`).
@@ -156,6 +164,21 @@ Response (200): тело файла; заголовки `content-type` (по mag
 - 415 `{ error: "unsupported content type" }` (не изображение)
 - 413 `{ error: "image too large" }` (raster > 20 МБ, svg > 2 МБ)
 - 500 `{ error: string }`
+
+### GET /filemanager-fs/delete-info
+Read-only preflight для удаления (header-гейт; сам ничего не удаляет).
+
+Query: `hint`, `path` (относительный posix-путь). Ответ 200: `{ kind: "file" | "dir" | "symlink-file" | "symlink-dir" | "missing", name, path, isRoot, uncommitted, gitStatus? }`.
+`isRoot` — путь равен корню воркспейса; `uncommitted` — файл имеет git-статус modified/added/untracked, либо у папки есть такой потомок (ignored никогда не считаются); вычисляется по per-handler кэшу git-статуса.
+Ошибки: 403 (без header / выход за корень), 404 (не существует), 500.
+
+### POST /filemanager-fs/delete
+Первая мутирующая операция: удаление файла или папки (рекурсивно). Только POST (GET → 405). Header-гейт обязателен; capability-токены для write не используются.
+
+Query: `hint`, `path`. Проверки: выход за корень → 403; любой сегмент `.git` → 403; путь = корень → 403; не существует → 404.
+Операция lstat-based и symlink-safe: финальный симлинк → unlink самой ссылки (цель, внутри или вне воркспейса, не затрагивается); реальная папка → удаление вглубь (readdir+lstat, depth-first; симлинки-потомки только unlink); промежуточный симлинк в пути → 403 (вглубь по ссылкам не идём). После успеха per-handler кэш git-статуса инвалидируется.
+Ответ 200: `{ "deleted": true, "path": "<rel>" }`. Ошибки ОС (EPERM/EACCES/EBUSY/ENOTEMPTY/ELOOP) → 409 `{ "error": "delete failed: <msg>" }`.
+Рассылка событий не нужна: удаление порождает fs-события родителя, live refresh обновляет списки, клиент prune-ит раскрытые пути и закрывает preview удалённого файла.
 
 ### GET /filemanager-fs/events
 SSE-подписка на изменения раскрытых каталогов (живое обновление дерева).
@@ -247,6 +270,12 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Путь с управляющими символами или кавычками — упоминание не строится, вставка пропускается
 - Путь содержит пробелы — вставляется quoted-форма `@"path"`, чтобы `@`-токен оставался корректным по грамматике
 
+- `delete-info` без header — 403; `delete` без header — 403, GET на `delete` — 405
+- Удаление корня воркспейса, пути с сегментом `.git` или выходящего за корень — 403; несуществующий путь — 404
+- Финальный symlink удаляется как ссылка; промежуточный симлинк в пути — 403; папка удаляется рекурсивно вглубь
+- Ошибки ОС при удалении (EPERM/EACCES/EBUSY/ENOTEMPTY/ELOOP) — 409 с сообщением
+- Удаление не ломает live refresh: fs-событие родителя обновляет списки, раскрытые пути prune-ются, watcher удалённой папки закрывается штатно
+
 ## Success criteria
 - Эндпоинт `read` возвращает ожидаемую форму JSON
 - Клиентская док-панель корректно открывается/закрывается, перетаскивается за шапку, поддерживает ресайз и скролл
@@ -274,7 +303,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - См. Overview — назначение и границы
 
 ## Boundaries & non-responsibilities
-- Нет редактирования файлов, только чтение и предпросмотр
+- Нет редактирования файлов: только чтение/предпросмотр и единственная write-операция — явное подтверждённое удаление через контекстное меню; прочие мутации (create/rename/move), корзина/undo и мультивыбор — вне скоупа
 - Изображения (png/jpeg/gif/webp/avif/svg) предпросматриваются в доке без редактирования и без тумбнейлов в дереве; PDF, видео и прочие бинарные форматы не покрываются
 - Любые операции за пределами корня воркспейса запрещены
 - Нет наблюдения всего workspace: watcher-ы создаются только на раскрытые каталоги (и корень `""`); нет двусторонних WebSocket-команд и молчаливого (без подтверждения) обновления preview
@@ -285,6 +314,7 @@ data: { "type": "changed", "path": "src/Panel.tsx", "kind": "change" }
 - Изображения: `/raw` — единственный эндпоинт без header (capability-токен вместо него); лимиты `MAX_IMAGE_BYTES` 20 МБ / `MAX_SVG_BYTES` 2 МБ; svg — `content-security-policy: sandbox`; JSON pretty — `JSON_PRETTY_MAX_CHARS` = 1 000 000
 - Кодировка: UTF-8; несовместимые кодировки считаются ошибкой
 - Заголовок безопасности: `x-dsh-filemanager: 1` обязателен для всех запросов, кроме `/raw`
+- Удаление: `POST /filemanager-fs/delete` (header-гейт, symlink-safe lstat-обход вглубь без следования ссылкам), запреты root/`.git`, инвалидация кэша git-статуса после успеха
 - Проверка пути: `isInside(root, target)` и `realpath` для защиты от выходов за корень
 - UI: док-панель справа с возможностью ресайза, прокруткой и перетаскиванием за шапку; моноширинный шрифт для текста
 - Позиция и размер панели предпросмотра запоминаются в localStorage в рамках воркспейса (ключ по hint, как для развёрнутых папок); при открытии файла панель восстанавливает сохранённое расположение, иначе — правый край
