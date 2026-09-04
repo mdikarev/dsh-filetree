@@ -690,4 +690,59 @@ body[data-ds-dark-theme] {
   outline-offset: -2px;
 }
 
+/* Delete-confirmation dialog (fixed backdrop above dock + tooltip) */
+.fm-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fm-confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  background: var(--fm-surface-elevated);
+  border: 1px solid var(--fm-border-strong);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fm-confirm-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--dsw-alias-label-secondary);
+}
+.fm-confirm-warning {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+}
+.fm-confirm-error {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+.fm-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.fm-confirm-btn {
+  border: 1px solid var(--fm-border-strong);
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fm-confirm-btn:hover { background: var(--fm-hover); }
+.fm-confirm-btn--danger {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
 `;

@@ -46,6 +46,14 @@ const en = {
   jsonTooLargeNote: "File too large to format — showing the raw source.",
   fileTruncated: "File truncated at 5 MB; not all content is shown.",
   deleteMenuItem: "Delete…",
+  deleteDialogTitle: "Delete",
+  deleteFileBody: "Delete {name}?",
+  deleteFolderBody: "Delete {name} and all its contents?",
+  deleteUncommittedWarning: "Uncommitted git changes inside will be lost.",
+  cancel: "Cancel",
+  deleteAction: "Delete",
+  deleteBlocked: "Nothing to delete.",
+  deleteErrorPrefix: "Delete failed: ",
 } as const;
 
 export type L10nKey = keyof typeof en;
@@ -84,6 +92,14 @@ const ru: Record<L10nKey, string> = {
   jsonTooLargeNote: "Файл слишком велик для форматирования — показан исходный текст.",
   fileTruncated: "Файл усечён до 5 МБ; показано не всё содержимое.",
   deleteMenuItem: "Удалить…",
+  deleteDialogTitle: "Удалить",
+  deleteFileBody: "Удалить {name}?",
+  deleteFolderBody: "Удалить {name} и всё его содержимое?",
+  deleteUncommittedWarning: "Незакоммиченные изменения git внутри будут потеряны.",
+  cancel: "Отмена",
+  deleteAction: "Удалить",
+  deleteBlocked: "Удалять нечего.",
+  deleteErrorPrefix: "Не удалось удалить: ",
 };
 
 export function detectLocale(navigatorLanguage: string, stored: string | null): Locale {

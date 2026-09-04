@@ -7,6 +7,9 @@ import { highlightSource } from "./syntax-highlighting.js";
 import { clampPosition, type Point } from "./preview-position.js";
 import { Tree, type TreeHandle } from "./Tree.js";
 import { ContextMenu } from "./ContextMenu.js";
+import { fetchDeleteInfo, fetchDelete, type DeleteInfo } from "./mutate-api.js";
+import { buildDeleteDialogModel, isPreviewAffected } from "./delete-flow.js";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog.js";
 import { createLiveRefreshCoordinator, staleExpandedPathsUnder, type FileChange } from "./live-refresh.js";
 import { createSseEventSource } from "./sse-client.js";
 import type { FileManagerStore } from "./store.js";
@@ -112,10 +115,16 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
   // True while the polling fallback is active (SSE unavailable).
   const [liveFallback, setLiveFallback] = useState(false);
 
-  // Tree-row context menu (right-click / Menu key) + pending delete target
-  // (Task 6 wires the confirm dialog and the delete call from pendingDelete).
+  // Tree-row context menu (right-click / Menu key) + the delete flow it
+  // triggers: pending delete target, then preflight info, busy and error for
+  // the confirmation dialog (see handleConfirmDelete and the dialog render).
   const [contextMenu, setContextMenu] = useState<{ path: string; name: string; x: number; y: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ path: string; name: string } | null>(null);
+  // Delete-confirmation dialog: preflight delete-info for the pending target,
+  // in-flight busy flag and localized error surfaced inside the dialog.
+  const [deleteInfo, setDeleteInfo] = useState<DeleteInfo | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
@@ -366,15 +375,58 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
     setChangedPreview({ kind: "idle" });
   }, []);
 
-  // Close the preview dialog on Escape while it is open.
+  // Close the preview dialog on Escape while it is open. The delete-confirm
+  // dialog takes Esc precedence: while a delete is pending (dialog open or
+  // its delete-info still loading) the preview dock must not close.
   useEffect(() => {
     if (!previewOpen) return;
     const onKey = (event: KeyboardEvent): void => {
+      if (pendingDelete) return;
       if (event.key === "Escape") handleClosePreview();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previewOpen, handleClosePreview]);
+  }, [previewOpen, handleClosePreview, pendingDelete]);
+
+  // When a delete becomes pending, preflight its delete-info (kind, root,
+  // uncommitted git state) so the confirm dialog can show warnings and block
+  // deleteable-as-root / missing targets; a failed preflight surfaces as a
+  // dialog error with a blocked (missing) model.
+  useEffect(() => {
+    if (!pendingDelete || !hint) { setDeleteInfo(null); return; }
+    let cancelled = false;
+    setDeleteBusy(false);
+    setDeleteError(null);
+    fetchDeleteInfo(hint, pendingDelete.path)
+      .then((info) => { if (!cancelled) setDeleteInfo(info); })
+      .catch((err: any) => { if (!cancelled) { setDeleteError(err?.message ?? String(err)); setDeleteInfo(null); } });
+    return () => { cancelled = true; };
+  }, [pendingDelete, hint]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!hint || !pendingDelete || !deleteInfo) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await fetchDelete(hint, pendingDelete.path);
+      const deletedPath = pendingDelete.path;
+      // Close a preview of the deleted file / a file under the deleted folder.
+      if (previewPathRef.current && isPreviewAffected(deletedPath, previewPathRef.current)) {
+        handleClosePreview();
+      }
+      // Drop expanded state under the deleted path.
+      const expanded = store.getExpandedPaths();
+      const stale = expanded.filter((p) => p === deletedPath || p.startsWith(deletedPath + "/"));
+      if (stale.length > 0) store.pruneExpandedPaths(stale);
+      // The fs event from the delete itself refreshes the parent listings.
+      setPendingDelete(null);
+      setDeleteInfo(null);
+    } catch (err: any) {
+      setDeleteError(err?.message ?? String(err));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [hint, pendingDelete, deleteInfo, store, handleClosePreview]);
 
   const handleDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -601,12 +653,25 @@ export function Panel({ open, sidebarLeft, hint, onClose, store }: PanelProps) {
               label: t("deleteMenuItem"),
               danger: true,
               onSelect: () => {
-                // Task 6 wires the confirm dialog; for now only clear + keep a
-                // pending marker so the flow compiles green at this commit.
+                // The effect above preflights delete-info and opens the
+                // confirm dialog for this pending target.
                 setPendingDelete({ path: contextMenu.path, name: contextMenu.name });
               },
             },
           ]}
+        />
+      )}
+
+      {pendingDelete && (deleteInfo || deleteError) && (
+        <ConfirmDeleteDialog
+          name={pendingDelete.name}
+          model={buildDeleteDialogModel(
+            deleteInfo ?? { kind: "missing", name: pendingDelete.name, path: pendingDelete.path, isRoot: false, uncommitted: false }
+          )}
+          busy={deleteBusy}
+          error={deleteError}
+          onCancel={() => { setPendingDelete(null); setDeleteInfo(null); setDeleteError(null); }}
+          onConfirm={handleConfirmDelete}
         />
       )}
 
