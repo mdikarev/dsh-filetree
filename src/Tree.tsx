@@ -145,6 +145,11 @@ function TreeNode({ level, entry, hint, path, onError, onOpenFile, onRowContextM
     }
 
     if (expanded) {
+      // Collapsing drops the cached listing so the next expand always fetches
+      // a fresh one: while collapsed the directory is not watched (the reload
+      // registration is removed), so a cached children list could go stale
+      // (files added on disk would not appear until a manual refresh).
+      setChildren(null);
       store.togglePath(fullPath);
       return;
     }

@@ -194,4 +194,35 @@ describe("Panel render", () => {
     g.fetch = originalFetch;
     cleanup();
   });
+
+  it("re-expanding a collapsed folder shows files added while collapsed", async () => {
+    // Clear persisted expansion state: an earlier test expanded "src" and the
+    // store persists expanded paths per workspace in localStorage, which would
+    // make this test's first click a collapse instead of an expand.
+    try {
+      localStorage.removeItem("dsh-filemanager-expanded:/workspace");
+      localStorage.removeItem("dsh-filemanager-open");
+    } catch {}
+    const bucket = FILES as Record<string, { entries?: unknown }>;
+    bucket.src = { entries: [{ name: "Panel.tsx", kind: "file" }] };
+    render(panelEl(panelProps()));
+    await waitFor(() => assert.ok(screen.getByText("src")));
+    // expand src
+    fireEvent.click(screen.getByText("src"));
+    await waitFor(() => assert.ok(screen.getByText("Panel.tsx")));
+    // collapse src (its watcher is dropped; children cached)
+    fireEvent.click(screen.getByText("src"));
+    await waitFor(() => assert.equal(screen.queryByText("Panel.tsx"), null));
+    // a file is added on disk while src is collapsed
+    bucket.src = {
+      entries: [
+        { name: "Panel.tsx", kind: "file" },
+        { name: "NewFile.tsx", kind: "file" },
+      ],
+    };
+    // re-expand: the tree must refetch, not serve the stale cached listing
+    fireEvent.click(screen.getByText("src"));
+    await waitFor(() => assert.ok(screen.getByText("NewFile.tsx")));
+    cleanup();
+  });
 });

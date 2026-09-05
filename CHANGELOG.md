@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tree rows now report the failing directory path to error handlers so a
   toast's Retry reloads exactly the directory that failed
+- Re-expanding a collapsed folder now refetches its listing: the cached
+  children were kept after collapse (and the watcher removed), so files added
+  on disk while the folder was collapsed stayed invisible until a manual
+  refresh; collapsing now drops the cache so the next expand is fresh
 
 ## [0.3.0] - 2026-09-04
 
