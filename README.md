@@ -76,7 +76,7 @@ All endpoints except `GET /filemanager-fs/raw` require the `x-dsh-filemanager: 1
 
 - **Node** >= 20 (`engines`).
 - **React 18** — provided by the DSH web host, not bundled (peer `^18.2.0`; verified against 18.3.1).
-- **DSH**: built and tested against `@deepseek-ai/dsh@0.1.2-rc.1` (web profile). Drag-and-drop into the composer targets the Lexical composer of dsh >= 0.1.2; textarea hosts of earlier dsh versions keep working through the same native text/plain drop. The plugin host and client APIs are pre-1.0 — pin the dsh version you deploy and re-test after dsh upgrades.
+- **DSH**: built and tested against `@deepseek-ai/dsh@0.2.1-rc.2` (web profile). Drag-and-drop into the composer targets the Lexical composer of dsh >= 0.1.2; textarea hosts of earlier dsh versions keep working through the same native text/plain drop. The plugin host and client APIs are pre-1.0 — pin the dsh version you deploy and re-test after dsh upgrades.
 - **Trust model**: server endpoints are served by the dsh host on localhost and rely on the `x-dsh-filemanager` header (image bytes additionally require an unguessable, expiring per-workspace capability token) plus the browser's same-origin/CORS behavior — treat the local dsh process as the trust boundary.
 
 ## Installation

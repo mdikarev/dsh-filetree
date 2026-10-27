@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tree rows now report the failing directory path to error handlers so a
   toast's Retry reloads exactly the directory that failed
+- Switching workspaces now updates the tree: dsh 0.2 removed `current` from the
+  session list snapshot, so the hint resolver now finds the displayed Session
+  via `retainedBy.mainView > 0` (keeping the legacy `current` path for older
+  dsh) and derives the recent-workspace fallback from Session `updatedAt`
 - Re-expanding a collapsed folder now refetches its listing: the cached
   children were kept after collapse (and the watcher removed), so files added
   on disk while the folder was collapsed stayed invisible until a manual

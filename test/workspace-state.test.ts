@@ -122,4 +122,62 @@ describe("computeWorkspaceState", () => {
       "/ws/b",
     );
   });
+it("follows the main-view Session when dsh >= 0.2 drops `current` (switching workspaces)", () => {
+    const workspaces = listOf({
+      phase: "ready",
+      items: [
+        { workspaceId: "a", path: "/ws/a", sessionIds: ["s-a"] },
+        { workspaceId: "b", path: "/ws/b", sessionIds: ["s-b"] },
+      ],
+    });
+    // dsh 0.2: no `current`; the main view retains the displayed Session.
+    const sessions = listOf({
+      phase: "ready",
+      ids: ["s-a", "s-b"],
+      byId: {
+        "s-a": { id: "s-a", retainedBy: { mainView: 0 }, updatedAt: 1 },
+        "s-b": { id: "s-b", retainedBy: { mainView: 1 }, updatedAt: 2 },
+      },
+    });
+    assert.deepStrictEqual(computeWorkspaceState(workspaces, sessions, "/ws/a"), {
+      status: "ready",
+      hint: "/ws/b",
+    });
+  });
+
+  it("keeps the previous hint when no Session is retained by the main view", () => {
+    const workspaces = listOf({
+      phase: "ready",
+      items: [
+        { workspaceId: "a", path: "/ws/a", sessionIds: ["s-a"] },
+        { workspaceId: "b", path: "/ws/b", sessionIds: ["s-b"] },
+      ],
+    });
+    const sessions = listOf({
+      phase: "ready",
+      byId: {
+        "s-a": { id: "s-a", retainedBy: {}, updatedAt: 1 },
+        "s-b": { id: "s-b", retainedBy: {}, updatedAt: 2 },
+      },
+    });
+    assert.strictEqual(computeWorkspaceState(workspaces, sessions, "/ws/a").hint, "/ws/a");
+  });
+
+  it("falls back to the most recently updated Workspace when dsh >= 0.2 has no recentWorkspaceId", () => {
+    const workspaces = listOf({
+      phase: "ready",
+      items: [
+        { workspaceId: "a", path: "/ws/a", sessionIds: ["s-a"], createdAt: "2026-01-01T00:00:00.000Z" },
+        { workspaceId: "b", path: "/ws/b", sessionIds: ["s-b"], createdAt: "2026-01-02T00:00:00.000Z" },
+      ],
+    });
+    const sessions = listOf({
+      phase: "ready",
+      byId: {
+        "s-a": { id: "s-a", retainedBy: {}, updatedAt: 10 },
+        "s-b": { id: "s-b", retainedBy: {}, updatedAt: 20 },
+      },
+    });
+    assert.strictEqual(computeWorkspaceState(workspaces, sessions).hint, "/ws/b");
+  });
 });
